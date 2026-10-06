@@ -11,6 +11,7 @@ from forensics_app.tools.registry import ToolRegistry
 
 class ToolTests(unittest.TestCase):
     def test_grayscale_returns_image_without_mutating_document(self) -> None:
+        """Test that the GrayscaleTool returns a new image and does not change the document's current image."""
         document = ImageDocument()
         document.current = Image.new("RGB", (4, 3), "red")
         result = GrayscaleTool().run(None, document)  # parent is unused by this tool
