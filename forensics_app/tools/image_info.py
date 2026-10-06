@@ -26,3 +26,5 @@ class ImageInfoTool(ForensicsTool):
                 "Format": document.path.suffix.upper().lstrip(".") if document.path else "Unknown",
             },
         )
+
+#hello
