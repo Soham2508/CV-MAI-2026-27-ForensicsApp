@@ -45,3 +45,4 @@ face detection/recognition, CNN classification and detection, transformers,
 semantic segmentation, and visualization/interpretability. Model weights and  
 datasets should not be committed to the starter repository; document where they  
 come from and keep paths configurable.
+
