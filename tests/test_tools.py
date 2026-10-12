@@ -53,10 +53,17 @@ class ToolTests(unittest.TestCase):
     def test_masking_keeps_only_pixels_brighter_than_threshold(self) -> None:
         image = Image.new("L", (3, 1))
         image.putdata([50, 135, 200])
+        base = Image.new("RGB", (3, 1), "red")
+        texture = Image.new("RGB", (3, 1), "blue")
 
-        output = MaskingTool().binary_masking_function(image, 135)
+        output = MaskingTool().composite_masked_texture(
+            image, base, texture, threshold=135
+        )
 
-        self.assertEqual(list(output.getdata()), [0, 0, 255])
+        self.assertEqual(
+            list(output.getdata()),
+            [(255, 0, 0), (255, 0, 0), (0, 0, 255)],
+        )
         self.assertEqual(list(image.getdata()), [50, 135, 200])
 
     def test_masking_composites_texture_over_base_with_mask(self) -> None:
