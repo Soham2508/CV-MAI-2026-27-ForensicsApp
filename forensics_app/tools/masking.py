@@ -10,8 +10,8 @@ from PIL import Image
 
 from forensics_app.core import ImageDocument
 from forensics_app.utils import ask_parameters
-from .base import ForensicsTool, ToolResult
 
+from .base import ForensicsTool, ToolResult
 
 IMAGE_TYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),

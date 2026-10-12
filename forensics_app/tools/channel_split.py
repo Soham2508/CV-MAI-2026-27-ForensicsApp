@@ -7,6 +7,7 @@ import tkinter as tk
 from PIL import Image
 
 from forensics_app.core import ImageDocument
+
 from .base import ForensicsTool, ToolResult
 
 

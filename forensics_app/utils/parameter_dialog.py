@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import math
 import tkinter as tk
 from tkinter import messagebox, ttk
-from collections.abc import Callable
-
 
 ParameterField = tuple[str, str, float, float, float, float]
 

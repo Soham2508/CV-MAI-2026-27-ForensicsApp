@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
+
 from .base import ForensicsTool, ToolResult
 
 
@@ -49,9 +50,7 @@ def ask_channel_pair(parent: tk.Misc) -> tuple[str, str] | None:
     ttk.Combobox(
         dialog, textvariable=first, values=CHANNELS, state="readonly", width=12
     ).grid(row=0, column=1, padx=(0, 12), pady=(12, 4))
-    ttk.Label(dialog, text="with").grid(
-        row=1, column=0, sticky="w", padx=12, pady=4
-    )
+    ttk.Label(dialog, text="with").grid(row=1, column=0, sticky="w", padx=12, pady=4)
     ttk.Combobox(
         dialog, textvariable=second, values=CHANNELS, state="readonly", width=12
     ).grid(row=1, column=1, padx=(0, 12), pady=4)

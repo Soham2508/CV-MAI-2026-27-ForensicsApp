@@ -92,6 +92,7 @@ A button receives a callable—not the result of calling it:
 def say_hello():
     print("Hello")
 
+
 ttk.Button(root, text="Run", command=say_hello).pack()
 ```
 
@@ -188,8 +189,8 @@ from .base import ForensicsTool, ToolResult
 
 
 class BlurTool(ForensicsTool):
-    tool_id = "gaussian_blur"       # unique, stable identifier
-    title = "Gaussian blur"         # text shown in the sidebar
+    tool_id = "gaussian_blur"  # unique, stable identifier
+    title = "Gaussian blur"  # text shown in the sidebar
     category = "Filtering"
     description = "Blur the working image with a chosen radius."
 
@@ -227,11 +228,13 @@ Edit `forensics_app/tools/__init__.py`:
 from .blur import BlurTool
 
 # Inside build_tool_registry():
-return ToolRegistry([
-    ImageInfoTool(),
-    GrayscaleTool(),
-    BlurTool(),
-])
+return ToolRegistry(
+    [
+        ImageInfoTool(),
+        GrayscaleTool(),
+        BlurTool(),
+    ]
+)
 ```
 
 Restart the app. A **Filtering** section and **Gaussian blur** button will appear  
