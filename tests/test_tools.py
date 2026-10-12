@@ -8,6 +8,7 @@ from PIL import Image
 from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
 from forensics_app.tools.channel_split import ChannelSplitTool, split_channels
+from forensics_app.tools.channel_swap import ChannelSwapTool, swap_channels
 from forensics_app.tools.contrast_stretch import (
     CLAHETool,
     ContrastStretchTool,
@@ -22,6 +23,52 @@ from forensics_app.tools.registry import ToolRegistry
 
 
 class ToolTests(unittest.TestCase):
+    def test_channel_swap_exchanges_any_rgb_pair_without_mutating_input(self) -> None:
+        image = Image.new("RGB", (2, 1))
+        image.putdata([(10, 20, 30), (40, 50, 60)])
+
+        output = swap_channels(image, "Green", "Blue")
+
+        self.assertEqual(list(output.getdata()), [(10, 30, 20), (40, 60, 50)])
+        self.assertEqual(list(image.getdata()), [(10, 20, 30), (40, 50, 60)])
+
+    def test_channel_swap_rejects_invalid_or_identical_channels(self) -> None:
+        image = Image.new("RGB", (1, 1))
+        with self.assertRaises(ValueError):
+            swap_channels(image, "Alpha", "Red")
+        with self.assertRaises(ValueError):
+            swap_channels(image, "Red", "Red")
+
+    def test_channel_swap_tool_prompts_for_channels_and_reports_selection(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), (10, 20, 30))
+
+        with patch(
+            "forensics_app.tools.channel_swap.ask_channel_pair",
+            return_value=("Red", "Green"),
+        ):
+            result = ChannelSwapTool().run(None, document)
+
+        self.assertEqual(result.image.getpixel((0, 0)), (20, 10, 30))
+        self.assertEqual(result.details["Channels"], "Red-Green")
+
+    def test_channel_swap_tool_returns_none_when_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with patch(
+            "forensics_app.tools.channel_swap.ask_channel_pair", return_value=None
+        ):
+            result = ChannelSwapTool().run(None, document)
+
+        self.assertIsNone(result)
+
+    def test_registry_registers_one_channel_swap_tool(self) -> None:
+        tools = build_tool_registry().all()
+        swaps = [tool for tool in tools if tool.category == "Color Swap"]
+        self.assertEqual(len(swaps), 1)
+        self.assertIsInstance(swaps[0], ChannelSwapTool)
+
     def test_grayscale_returns_image_without_mutating_document(self) -> None:
         """Test that the GrayscaleTool returns a new image and does not change the document's current image."""
         document = ImageDocument()
