@@ -5,6 +5,7 @@ from __future__ import annotations
 import tkinter as tk
 
 from forensics_app.core import ImageDocument
+
 from .base import ForensicsTool, ToolResult
 
 

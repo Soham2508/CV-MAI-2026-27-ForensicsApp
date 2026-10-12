@@ -11,8 +11,8 @@ from PIL import UnidentifiedImageError
 from forensics_app.core import ImageDocument
 from forensics_app.tools.base import ForensicsTool
 from forensics_app.tools.registry import ToolRegistry
-from .image_view import ImageView
 
+from .image_view import ImageView
 
 OPEN_TYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),
