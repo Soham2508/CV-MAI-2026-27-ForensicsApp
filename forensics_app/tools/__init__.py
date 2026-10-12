@@ -3,6 +3,7 @@
 from .masking import MaskingTool
 
 from .channel_split import ChannelSplitTool
+from .contrast_stretch import CLAHETool, ContrastStretchTool, HistogramEqualizationTool
 from .grayscale import GrayscaleTool
 from .image_info import ImageInfoTool
 from .registry import ToolRegistry
@@ -15,6 +16,9 @@ def build_tool_registry() -> ToolRegistry:
             ChannelSplitTool(),
             GrayscaleTool(),
             MaskingTool(),
+            ContrastStretchTool(),
+            HistogramEqualizationTool(),
+            CLAHETool(),
         ]
     )
 
