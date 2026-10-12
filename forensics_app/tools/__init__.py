@@ -8,6 +8,7 @@ from .histogram import HistogramTool
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
 from .registry import ToolRegistry
+from .convolution import ConvolutionTool
 from .ski_filters import SkiFiltersTool
 
 
@@ -23,6 +24,7 @@ def build_tool_registry() -> ToolRegistry:
             CLAHETool(),
             SkiFiltersTool(),
             ChannelSwapTool(),
+            ConvolutionTool(),
             HistogramTool(),
         ]
     )
