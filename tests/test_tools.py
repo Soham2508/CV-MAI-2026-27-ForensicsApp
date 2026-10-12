@@ -17,6 +17,11 @@ from forensics_app.tools.contrast_stretch import (
     contrast_stretch_image,
     equalize_histogram,
 )
+from forensics_app.tools.convolution import (
+    ConvolutionTool,
+    apply_convolution,
+    create_kernel,
+)
 from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
@@ -265,6 +270,58 @@ class ToolTests(unittest.TestCase):
     def test_spatial_filter_rejects_unknown_mode(self) -> None:
         with self.assertRaises(ValueError):
             apply_ski_filter(Image.new("RGB", (2, 2)), "sobel", mode="unknown")
+
+    def test_convolution_kernels_match_direction_and_are_normalized(self) -> None:
+        expected_shapes = {
+            "horizontal": (1, 3),
+            "vertical": (3, 1),
+            "2d": (3, 3),
+        }
+        for direction, shape in expected_shapes.items():
+            with self.subTest(direction=direction):
+                kernel = create_kernel(3, direction)
+                self.assertEqual(kernel.shape, shape)
+                self.assertAlmostEqual(float(kernel.sum()), 1.0)
+
+    def test_convolution_rejects_invalid_kernel_options(self) -> None:
+        with self.assertRaises(ValueError):
+            create_kernel(0, "horizontal")
+        with self.assertRaises(ValueError):
+            create_kernel(3, "diagonal")
+
+    def test_convolution_preserves_constant_grayscale_intensity(self) -> None:
+        image = Image.new("RGB", (5, 4), (73, 73, 73))
+
+        output = apply_convolution(image, 3, "2d")
+
+        self.assertEqual(output.mode, "L")
+        self.assertEqual(output.size, image.size)
+        self.assertEqual(list(output.getdata()), [73] * 20)
+
+    def test_convolution_tool_uses_selected_options(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("L", (3, 3), 90)
+        with patch(
+            "forensics_app.tools.convolution.ask_convolution_options",
+            return_value=(5, "vertical"),
+        ) as ask_options:
+            result = ConvolutionTool().run(None, document)
+
+        ask_options.assert_called_once_with(None)
+        self.assertEqual(result.image.mode, "L")
+        self.assertEqual(result.details["Kernel size"], "5")
+        self.assertEqual(result.details["Direction"], "Vertical")
+
+    def test_convolution_tool_returns_none_when_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("L", (2, 2))
+        with patch(
+            "forensics_app.tools.convolution.ask_convolution_options",
+            return_value=None,
+        ):
+            result = ConvolutionTool().run(None, document)
+
+        self.assertIsNone(result)
 
     def test_gaussian_filter_rejects_nonpositive_sigma(self) -> None:
         with self.assertRaises(ValueError):
