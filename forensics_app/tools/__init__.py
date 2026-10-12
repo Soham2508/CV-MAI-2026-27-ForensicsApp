@@ -9,6 +9,7 @@ from .masking import MaskingTool
 from .registry import ToolRegistry
 from .histogram import GrayscaleHistogramTool, RGBHistogramsTool
 from .ski_filters import SkiFiltersTool
+from .sharpen import SharpenTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -25,6 +26,7 @@ def build_tool_registry() -> ToolRegistry:
             ChannelSwapTool(),
             GrayscaleHistogramTool(),
             RGBHistogramsTool(),
+            SharpenTool(),
         ]
     )
 
