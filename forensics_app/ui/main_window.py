@@ -46,6 +46,7 @@ class MainWindow:
             "Category.TLabel", background="#eef1f5", font=("TkDefaultFont", 10, "bold")
         )
         style.configure("Tool.TButton", anchor="w", padding=(10, 7))
+        style.configure("Tool.TMenubutton", anchor="w", padding=(10, 7))
         style.configure("Title.TLabel", font=("TkDefaultFont", 16, "bold"))
 
     def _build_menu(self) -> None:
@@ -107,12 +108,30 @@ class MainWindow:
                 anchor="w", pady=(9, 4)
             )
             for tool in tools:
-                button = ttk.Button(
-                    sidebar,
-                    text=tool.title,
-                    style="Tool.TButton",
-                    command=lambda selected=tool: self.run_tool(selected),
-                )
+                menu_options = getattr(tool, "menu_options", ())
+                if menu_options:
+                    button = ttk.Menubutton(
+                        sidebar,
+                        text=tool.title,
+                        style="Tool.TMenubutton",
+                        direction="below",
+                    )
+                    menu = tk.Menu(button, tearoff=False)
+                    for option in menu_options:
+                        menu.add_command(
+                            label=option,
+                            command=lambda selected=tool, choice=option: self.run_tool(
+                                selected, choice
+                            ),
+                        )
+                    button.configure(menu=menu)
+                else:
+                    button = ttk.Button(
+                        sidebar,
+                        text=tool.title,
+                        style="Tool.TButton",
+                        command=lambda selected=tool: self.run_tool(selected),
+                    )
                 button.pack(fill="x", pady=2)
                 button.bind(
                     "<Enter>",
@@ -187,11 +206,17 @@ class MainWindow:
             return
         self.status.set(f"Saved result as {Path(filename).name}")
 
-    def run_tool(self, tool: ForensicsTool) -> None:
+    def run_tool(self, tool: ForensicsTool, action: str | None = None) -> None:
         if tool.requires_image and not self._require_image():
             return
         try:
-            result = tool.run(self.root, self.document)
+            if action is None:
+                result = tool.run(self.root, self.document)
+            else:
+                run_action = getattr(tool, "run_action", None)
+                if run_action is None:
+                    raise ValueError(f"{tool.title} does not support menu actions.")
+                result = run_action(self.root, self.document, action)
         except Exception as error:  # keep one student feature from crashing the shell
             messagebox.showerror(f"{tool.title} failed", str(error), parent=self.root)
             self.status.set(f"Error in {tool.title}.")
