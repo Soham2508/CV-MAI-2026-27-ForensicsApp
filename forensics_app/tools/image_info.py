@@ -23,8 +23,8 @@ class ImageInfoTool(ForensicsTool):
                 "Width": f"{image.width} px",
                 "Height": f"{image.height} px",
                 "Mode": image.mode,
-                "Format": document.path.suffix.upper().lstrip(".") if document.path else "Unknown",
+                "Format": document.path.suffix.upper().lstrip(".")
+                if document.path
+                else "Unknown",
             },
         )
-
-#hello

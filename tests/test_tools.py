@@ -154,9 +154,7 @@ class ToolTests(unittest.TestCase):
         base = Image.new("RGB", (2, 1), "red")
         texture = Image.new("RGB", (1, 1), "blue")
 
-        output = MaskingTool().composite_masked_texture(
-            mask_source, base, texture
-        )
+        output = MaskingTool().composite_masked_texture(mask_source, base, texture)
 
         self.assertEqual(output.size, base.size)
         self.assertEqual(list(output.getdata()), [(255, 0, 0), (0, 0, 255)])

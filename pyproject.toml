@@ -7,7 +7,19 @@ name = "forensics-app"
 version = "0.1.0"
 description = "Extensible Tkinter starter for an MSc Computer Vision course"
 requires-python = ">=3.10"
-dependencies = ["Pillow>=10.0,<13", "numpy>=1.24", "scikit-image>=0.22"]
+dependencies = ["Pillow>=10.0,<13", "numpy>=1.24,<2.0", "scikit-image>=0.22"]
+
+[project.optional-dependencies]
+dev = ["ruff>=0.6.9"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
 
 [tool.setuptools.packages.find]
 include = ["forensics_app*"]
