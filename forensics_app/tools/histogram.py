@@ -43,9 +43,9 @@ class RGBHistogramsTool(ForensicsTool):
     def run(self, parent, document: ImageDocument) -> ToolResult:
         assert document.current is not None
 
-        red_channel, green_channel, blue_channel = (
-            document.current.convert("RGB").split()
-        )
+        red_channel, green_channel, blue_channel = document.current.convert(
+            "RGB"
+        ).split()
 
         red_counts = red_channel.histogram()
         green_counts = green_channel.histogram()
@@ -70,15 +70,9 @@ class RGBHistogramsTool(ForensicsTool):
 
         # Fourth plot: all three channels overlaid
         overlay_axis = axes[1, 1]
-        overlay_axis.plot(
-            intensities, red_counts, color="red", label="Red"
-        )
-        overlay_axis.plot(
-            intensities, green_counts, color="green", label="Green"
-        )
-        overlay_axis.plot(
-            intensities, blue_counts, color="blue", label="Blue"
-        )
+        overlay_axis.plot(intensities, red_counts, color="red", label="Red")
+        overlay_axis.plot(intensities, green_counts, color="green", label="Green")
+        overlay_axis.plot(intensities, blue_counts, color="blue", label="Blue")
         overlay_axis.set_title("RGB overlay")
         overlay_axis.set_xlabel("Pixel intensity (0–255)")
         overlay_axis.set_ylabel("Number of pixels")
