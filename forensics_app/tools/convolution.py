@@ -33,8 +33,7 @@ def convolve_2d(image_array: np.ndarray, kernel: np.ndarray) -> np.ndarray:
 def parse_kernel(text: str) -> np.ndarray:
     """Read rows of numbers separated by semicolons and commas."""
     rows = [
-        [float(value.strip()) for value in row.split(",")]
-        for row in text.split(";")
+        [float(value.strip()) for value in row.split(",")] for row in text.split(";")
     ]
 
     if not rows or any(len(row) != len(rows[0]) for row in rows):
@@ -50,6 +49,7 @@ def parse_kernel(text: str) -> np.ndarray:
 
     return kernel
 
+
 def convolve_image(image: Image.Image, kernel: np.ndarray) -> Image.Image:
     """Convolve a grayscale copy of the image and scale it for display."""
     gray = image.convert("L")
@@ -63,6 +63,7 @@ def convolve_image(image: Image.Image, kernel: np.ndarray) -> Image.Image:
         response = response / largest * 255
 
     return Image.fromarray(response.astype(np.uint8))
+
 
 class ConvolutionTool(ForensicsTool):
     tool_id = "convolution"
@@ -83,18 +84,24 @@ class ConvolutionTool(ForensicsTool):
         choice = choice.strip().lower()
 
         if choice == "horizontal":
-            kernel = np.array([
-                [-1, 0, 1],
-                [-2, 0, 2],
-                [-1, 0, 1],
-            ], dtype=float)
+            kernel = np.array(
+                [
+                    [-1, 0, 1],
+                    [-2, 0, 2],
+                    [-1, 0, 1],
+                ],
+                dtype=float,
+            )
 
         elif choice == "vertical":
-            kernel = np.array([
-                [-1, -2, -1],
-                [0, 0, 0],
-                [1, 2, 1],
-            ], dtype=float)
+            kernel = np.array(
+                [
+                    [-1, -2, -1],
+                    [0, 0, 0],
+                    [1, 2, 1],
+                ],
+                dtype=float,
+            )
 
         elif choice == "custom":
             kernel_text = simpledialog.askstring(
