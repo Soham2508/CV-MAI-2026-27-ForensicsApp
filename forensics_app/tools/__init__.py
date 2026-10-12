@@ -1,5 +1,7 @@
 """Register course functionality here so it appears in the sidebar."""
 
+from .masking import MaskingTool
+
 from .channel_split import ChannelSplitTool
 from .grayscale import GrayscaleTool
 from .image_info import ImageInfoTool
@@ -12,6 +14,7 @@ def build_tool_registry() -> ToolRegistry:
             ImageInfoTool(),
             ChannelSplitTool(),
             GrayscaleTool(),
+            MaskingTool(),
         ]
     )
 

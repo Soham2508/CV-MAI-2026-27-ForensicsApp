@@ -6,6 +6,7 @@ from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
 from forensics_app.tools.channel_split import ChannelSplitTool, split_channels
 from forensics_app.tools.grayscale import GrayscaleTool
+from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
 
 
@@ -48,6 +49,28 @@ class ToolTests(unittest.TestCase):
     def test_channel_split_tool_is_registered_by_default(self) -> None:
         tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
         self.assertIn(ChannelSplitTool.tool_id, tool_ids)
+
+    def test_masking_keeps_only_pixels_brighter_than_threshold(self) -> None:
+        image = Image.new("L", (3, 1))
+        image.putdata([50, 135, 200])
+
+        output = MaskingTool().binary_masking_function(image, 135)
+
+        self.assertEqual(list(output.getdata()), [0, 0, 255])
+        self.assertEqual(list(image.getdata()), [50, 135, 200])
+
+    def test_masking_composites_texture_over_base_with_mask(self) -> None:
+        mask_source = Image.new("L", (2, 1))
+        mask_source.putdata([0, 255])
+        base = Image.new("RGB", (2, 1), "red")
+        texture = Image.new("RGB", (1, 1), "blue")
+
+        output = MaskingTool().composite_masked_texture(
+            mask_source, base, texture
+        )
+
+        self.assertEqual(output.size, base.size)
+        self.assertEqual(list(output.getdata()), [(255, 0, 0), (0, 0, 255)])
 
 
 if __name__ == "__main__":
