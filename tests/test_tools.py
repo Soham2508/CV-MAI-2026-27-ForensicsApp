@@ -1,7 +1,7 @@
-import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+import unittest
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
@@ -18,8 +18,10 @@ from forensics_app.tools.contrast_stretch import (
     equalize_histogram,
 )
 from forensics_app.tools.grayscale import GrayscaleTool
+from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
+from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
 
 
 class ToolTests(unittest.TestCase):
@@ -68,6 +70,48 @@ class ToolTests(unittest.TestCase):
         swaps = [tool for tool in tools if tool.category == "Color Swap"]
         self.assertEqual(len(swaps), 1)
         self.assertIsInstance(swaps[0], ChannelSwapTool)
+
+    def test_registry_registers_one_histogram_tool_with_all_options(self) -> None:
+        tools = build_tool_registry().all()
+        histograms = [tool for tool in tools if isinstance(tool, HistogramTool)]
+
+        self.assertEqual(len(histograms), 1)
+        self.assertEqual(histograms[0].menu_options, HISTOGRAM_OPTIONS)
+
+    def test_histogram_actions_plot_selected_channels(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (2, 1))
+        document.current.putdata([(10, 20, 30), (40, 50, 60)])
+        figure = MagicMock()
+        axis = MagicMock()
+
+        with (
+            patch(
+                "forensics_app.tools.histogram.plt.subplots",
+                return_value=(figure, axis),
+            ),
+            patch("forensics_app.tools.histogram.plt.show"),
+        ):
+            for option, expected_colors in (
+                ("Greyscale", ["gray"]),
+                ("R", ["red"]),
+                ("G", ["green"]),
+                ("B", ["blue"]),
+                ("RGB combined", ["red", "green", "blue"]),
+            ):
+                with self.subTest(option=option):
+                    axis.reset_mock()
+                    result = HistogramTool().run_action(None, document, option)
+
+                    self.assertEqual(result.details["Histogram"], option)
+                    self.assertEqual(
+                        [call.kwargs["color"] for call in axis.plot.call_args_list],
+                        expected_colors,
+                    )
+                    if option == "RGB combined":
+                        axis.legend.assert_called_once()
+                    else:
+                        axis.legend.assert_not_called()
 
     def test_grayscale_returns_image_without_mutating_document(self) -> None:
         """Test that the GrayscaleTool returns a new image and does not change the document's current image."""
@@ -179,6 +223,53 @@ class ToolTests(unittest.TestCase):
         tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
         self.assertIn(ChannelSplitTool.tool_id, tool_ids)
 
+    def test_spatial_filter_tool_is_registered_by_default(self) -> None:
+        tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
+        self.assertIn(SkiFiltersTool.tool_id, tool_ids)
+
+    def test_spatial_filters_return_rgb_images_without_mutating_input(self) -> None:
+        image = Image.new("RGB", (5, 5), (32, 96, 160))
+        image.putpixel((2, 2), (255, 0, 64))
+
+        for filter_name in (
+            "gaussian",
+            "prewitt",
+            "sobel",
+            "scharr",
+            "median",
+            "unsharp_mask",
+        ):
+            with self.subTest(filter_name=filter_name):
+                output = apply_ski_filter(image, filter_name, sigma=1.5)
+                self.assertEqual(output.mode, "RGB")
+                self.assertEqual(output.size, image.size)
+                self.assertEqual(image.getpixel((2, 2)), (255, 0, 64))
+
+    def test_spatial_filters_support_direct_rgb_mode(self) -> None:
+        image = Image.new("RGB", (5, 5), (32, 96, 160))
+        image.putpixel((2, 2), (255, 0, 64))
+
+        for filter_name in (
+            "gaussian",
+            "prewitt",
+            "sobel",
+            "scharr",
+            "median",
+            "unsharp_mask",
+        ):
+            with self.subTest(filter_name=filter_name):
+                output = apply_ski_filter(image, filter_name, mode="direct")
+                self.assertEqual(output.mode, "RGB")
+                self.assertEqual(output.size, image.size)
+
+    def test_spatial_filter_rejects_unknown_mode(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_ski_filter(Image.new("RGB", (2, 2)), "sobel", mode="unknown")
+
+    def test_gaussian_filter_rejects_nonpositive_sigma(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_ski_filter(Image.new("RGB", (2, 2)), "gaussian", sigma=0)
+
     def test_masking_keeps_only_pixels_brighter_than_threshold(self) -> None:
         image = Image.new("L", (3, 1))
         image.putdata([50, 135, 200])
@@ -201,9 +292,7 @@ class ToolTests(unittest.TestCase):
         base = Image.new("RGB", (2, 1), "red")
         texture = Image.new("RGB", (1, 1), "blue")
 
-        output = MaskingTool().composite_masked_texture(
-            mask_source, base, texture
-        )
+        output = MaskingTool().composite_masked_texture(mask_source, base, texture)
 
         self.assertEqual(output.size, base.size)
         self.assertEqual(list(output.getdata()), [(255, 0, 0), (0, 0, 255)])
