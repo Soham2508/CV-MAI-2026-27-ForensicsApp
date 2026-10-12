@@ -10,6 +10,7 @@ from .image_info import ImageInfoTool
 from .registry import ToolRegistry
 from .histogram import GrayscaleHistogramTool, RGBHistogramsTool
 from .convolution import ConvolutionTool
+from .canny import CannyTool
 
 def build_tool_registry() -> ToolRegistry:
     return ToolRegistry(
@@ -25,6 +26,7 @@ def build_tool_registry() -> ToolRegistry:
             GrayscaleHistogramTool(),
             RGBHistogramsTool(),
             ConvolutionTool(),
+            CannyTool(),
         ]
     )
 
