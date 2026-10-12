@@ -1,4 +1,5 @@
 Pillow>=10.0,<13
-numpy>=1.24
+numpy>=1.24,<2.0
 scikit-image>=0.22
 matplotlib>=3.7
+ruff>=0.6.9

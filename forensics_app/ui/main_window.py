@@ -11,8 +11,8 @@ from PIL import UnidentifiedImageError
 from forensics_app.core import ImageDocument
 from forensics_app.tools.base import ForensicsTool
 from forensics_app.tools.registry import ToolRegistry
-from .image_view import ImageView
 
+from .image_view import ImageView
 
 OPEN_TYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),
@@ -42,15 +42,21 @@ class MainWindow:
         if "clam" in style.theme_names():
             style.theme_use("clam")
         style.configure("Sidebar.TFrame", background="#eef1f5")
-        style.configure("Category.TLabel", background="#eef1f5", font=("TkDefaultFont", 10, "bold"))
+        style.configure(
+            "Category.TLabel", background="#eef1f5", font=("TkDefaultFont", 10, "bold")
+        )
         style.configure("Tool.TButton", anchor="w", padding=(10, 7))
         style.configure("Title.TLabel", font=("TkDefaultFont", 16, "bold"))
 
     def _build_menu(self) -> None:
         menu = tk.Menu(self.root)
         file_menu = tk.Menu(menu, tearoff=False)
-        file_menu.add_command(label="Open image…", command=self.open_image, accelerator="Ctrl+O")
-        file_menu.add_command(label="Save result as…", command=self.save_image, accelerator="Ctrl+Shift+S")
+        file_menu.add_command(
+            label="Open image…", command=self.open_image, accelerator="Ctrl+O"
+        )
+        file_menu.add_command(
+            label="Save result as…", command=self.save_image, accelerator="Ctrl+Shift+S"
+        )
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.destroy)
         menu.add_cascade(label="File", menu=file_menu)
@@ -72,14 +78,20 @@ class MainWindow:
 
         toolbar = ttk.Frame(container, padding=(10, 8))
         toolbar.pack(fill="x")
-        ttk.Button(toolbar, text="Open image", command=self.open_image).pack(side="left")
-        ttk.Button(toolbar, text="Save result", command=self.save_image).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Open image", command=self.open_image).pack(
+            side="left"
+        )
+        ttk.Button(toolbar, text="Save result", command=self.save_image).pack(
+            side="left", padx=(6, 0)
+        )
         ttk.Separator(toolbar, orient="vertical").pack(side="left", fill="y", padx=10)
         self.undo_button = ttk.Button(toolbar, text="Undo", command=self.undo)
         self.undo_button.pack(side="left")
         self.redo_button = ttk.Button(toolbar, text="Redo", command=self.redo)
         self.redo_button.pack(side="left", padx=(6, 0))
-        ttk.Button(toolbar, text="Reset", command=self.reset).pack(side="left", padx=(6, 0))
+        ttk.Button(toolbar, text="Reset", command=self.reset).pack(
+            side="left", padx=(6, 0)
+        )
 
         body = ttk.Panedwindow(container, orient="horizontal")
         body.pack(fill="both", expand=True)
@@ -87,11 +99,13 @@ class MainWindow:
         sidebar = ttk.Frame(body, style="Sidebar.TFrame", padding=12, width=235)
         sidebar.pack_propagate(False)
         body.add(sidebar, weight=0)
-        ttk.Label(sidebar, text="Forensics tools", style="Title.TLabel", background="#eef1f5").pack(
-            anchor="w", pady=(0, 12)
-        )
+        ttk.Label(
+            sidebar, text="Forensics tools", style="Title.TLabel", background="#eef1f5"
+        ).pack(anchor="w", pady=(0, 12))
         for category, tools in self.registry.categories():
-            ttk.Label(sidebar, text=category, style="Category.TLabel").pack(anchor="w", pady=(9, 4))
+            ttk.Label(sidebar, text=category, style="Category.TLabel").pack(
+                anchor="w", pady=(9, 4)
+            )
             for tool in tools:
                 button = ttk.Button(
                     sidebar,
@@ -100,7 +114,10 @@ class MainWindow:
                     command=lambda selected=tool: self.run_tool(selected),
                 )
                 button.pack(fill="x", pady=2)
-                button.bind("<Enter>", lambda _event, selected=tool: self.status.set(selected.description))
+                button.bind(
+                    "<Enter>",
+                    lambda _event, selected=tool: self.status.set(selected.description),
+                )
                 button.bind("<Leave>", lambda _event: self.status.set("Ready."))
 
         self.image_view = ImageView(body)
@@ -109,15 +126,25 @@ class MainWindow:
         inspector = ttk.Frame(body, padding=12, width=250)
         inspector.pack_propagate(False)
         body.add(inspector, weight=0)
-        ttk.Label(inspector, text="Results", style="Title.TLabel").pack(anchor="w", pady=(0, 10))
-        self.results = ttk.Treeview(inspector, columns=("value",), show="tree headings", height=15)
+        ttk.Label(inspector, text="Results", style="Title.TLabel").pack(
+            anchor="w", pady=(0, 10)
+        )
+        self.results = ttk.Treeview(
+            inspector, columns=("value",), show="tree headings", height=15
+        )
         self.results.heading("#0", text="Property")
         self.results.heading("value", text="Value")
         self.results.column("#0", width=95, stretch=True)
         self.results.column("value", width=120, stretch=True)
         self.results.pack(fill="both", expand=True)
 
-        ttk.Label(container, textvariable=self.status, anchor="w", padding=(10, 6), relief="sunken").pack(fill="x")
+        ttk.Label(
+            container,
+            textvariable=self.status,
+            anchor="w",
+            padding=(10, 6),
+            relief="sunken",
+        ).pack(fill="x")
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda _event: self.open_image())
@@ -126,7 +153,9 @@ class MainWindow:
         self.root.bind_all("<Control-y>", lambda _event: self.redo())
 
     def open_image(self) -> None:
-        filename = filedialog.askopenfilename(title="Open evidence image", filetypes=OPEN_TYPES)
+        filename = filedialog.askopenfilename(
+            title="Open evidence image", filetypes=OPEN_TYPES
+        )
         if not filename:
             return
         try:
@@ -202,8 +231,12 @@ class MainWindow:
 
     def _refresh(self) -> None:
         self.image_view.show(self.document.current)
-        self.undo_button.configure(state="normal" if self.document.can_undo else "disabled")
-        self.redo_button.configure(state="normal" if self.document.can_redo else "disabled")
+        self.undo_button.configure(
+            state="normal" if self.document.can_undo else "disabled"
+        )
+        self.redo_button.configure(
+            state="normal" if self.document.can_redo else "disabled"
+        )
         title = self.document.path.name if self.document.path else "No image"
         self.root.title(f"ForensicsApp — {title}")
 

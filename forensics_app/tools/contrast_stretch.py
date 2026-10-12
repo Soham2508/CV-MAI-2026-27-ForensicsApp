@@ -10,6 +10,7 @@ from skimage import exposure
 
 from forensics_app.core import ImageDocument
 from forensics_app.utils import ask_parameters
+
 from .base import ForensicsTool, ToolResult
 
 

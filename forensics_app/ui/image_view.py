@@ -47,7 +47,10 @@ class ImageView(ttk.Frame):
             self._photo = None
             return
 
-        available = (max(self.canvas.winfo_width() - 24, 1), max(self.canvas.winfo_height() - 24, 1))
+        available = (
+            max(self.canvas.winfo_width() - 24, 1),
+            max(self.canvas.winfo_height() - 24, 1),
+        )
         preview = self._source.copy()
         preview.thumbnail(available, Image.Resampling.LANCZOS)
         self._photo = ImageTk.PhotoImage(preview)
