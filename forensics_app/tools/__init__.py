@@ -4,10 +4,11 @@ from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
 from .contrast_stretch import CLAHETool, ContrastStretchTool, HistogramEqualizationTool
 from .grayscale import GrayscaleTool
+from .histogram import HistogramTool
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
 from .registry import ToolRegistry
-from .histogram import GrayscaleHistogramTool, RGBHistogramsTool
+from .convolution import ConvolutionTool
 from .ski_filters import SkiFiltersTool
 from .sharpen import SharpenTool
 
@@ -24,8 +25,8 @@ def build_tool_registry() -> ToolRegistry:
             CLAHETool(),
             SkiFiltersTool(),
             ChannelSwapTool(),
-            GrayscaleHistogramTool(),
-            RGBHistogramsTool(),
+            ConvolutionTool(),
+            HistogramTool(),
             SharpenTool(),
         ]
     )

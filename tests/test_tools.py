@@ -1,7 +1,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from PIL import Image
 
@@ -18,6 +18,7 @@ from forensics_app.tools.contrast_stretch import (
     equalize_histogram,
 )
 from forensics_app.tools.grayscale import GrayscaleTool
+from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
 from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
@@ -69,6 +70,48 @@ class ToolTests(unittest.TestCase):
         swaps = [tool for tool in tools if tool.category == "Color Swap"]
         self.assertEqual(len(swaps), 1)
         self.assertIsInstance(swaps[0], ChannelSwapTool)
+
+    def test_registry_registers_one_histogram_tool_with_all_options(self) -> None:
+        tools = build_tool_registry().all()
+        histograms = [tool for tool in tools if isinstance(tool, HistogramTool)]
+
+        self.assertEqual(len(histograms), 1)
+        self.assertEqual(histograms[0].menu_options, HISTOGRAM_OPTIONS)
+
+    def test_histogram_actions_plot_selected_channels(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (2, 1))
+        document.current.putdata([(10, 20, 30), (40, 50, 60)])
+        figure = MagicMock()
+        axis = MagicMock()
+
+        with (
+            patch(
+                "forensics_app.tools.histogram.plt.subplots",
+                return_value=(figure, axis),
+            ),
+            patch("forensics_app.tools.histogram.plt.show"),
+        ):
+            for option, expected_colors in (
+                ("Greyscale", ["gray"]),
+                ("R", ["red"]),
+                ("G", ["green"]),
+                ("B", ["blue"]),
+                ("RGB combined", ["red", "green", "blue"]),
+            ):
+                with self.subTest(option=option):
+                    axis.reset_mock()
+                    result = HistogramTool().run_action(None, document, option)
+
+                    self.assertEqual(result.details["Histogram"], option)
+                    self.assertEqual(
+                        [call.kwargs["color"] for call in axis.plot.call_args_list],
+                        expected_colors,
+                    )
+                    if option == "RGB combined":
+                        axis.legend.assert_called_once()
+                    else:
+                        axis.legend.assert_not_called()
 
     def test_grayscale_returns_image_without_mutating_document(self) -> None:
         """Test that the GrayscaleTool returns a new image and does not change the document's current image."""
