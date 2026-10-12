@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
+from forensics_app.utils import ask_parameters
 from .base import ForensicsTool, ToolResult
 
 
@@ -90,7 +91,14 @@ class MaskingTool(ForensicsTool):
         with Image.open(texture_path) as image:
             texture_image = image.copy()
 
-        threshold = 10
+        parameters = ask_parameters(
+            parent,
+            "Mask threshold",
+            (("threshold", "Threshold", 0, 255, 1, 10),),
+        )
+        if parameters is None:
+            return None
+        threshold = int(parameters["threshold"])
         mask_source = document.current
         output = self.composite_masked_texture(
             mask_source,

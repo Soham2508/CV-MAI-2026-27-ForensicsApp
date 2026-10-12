@@ -1,4 +1,7 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from PIL import Image
 
@@ -157,6 +160,38 @@ class ToolTests(unittest.TestCase):
 
         self.assertEqual(output.size, base.size)
         self.assertEqual(list(output.getdata()), [(255, 0, 0), (0, 0, 255)])
+
+    def test_masking_tool_uses_adjustable_threshold(self) -> None:
+        with TemporaryDirectory() as directory:
+            base_path = Path(directory) / "base.png"
+            texture_path = Path(directory) / "texture.png"
+            Image.new("RGB", (3, 1), "red").save(base_path)
+            Image.new("RGB", (3, 1), "blue").save(texture_path)
+            document = ImageDocument()
+            document.current = Image.new("L", (3, 1))
+            document.current.putdata([50, 135, 200])
+
+            with (
+                patch(
+                    "forensics_app.tools.masking.filedialog.askopenfilename",
+                    side_effect=[str(base_path), str(texture_path)],
+                ),
+                patch(
+                    "forensics_app.tools.masking.ask_parameters",
+                    return_value={"threshold": 135.0},
+                ) as ask_parameters,
+            ):
+                result = MaskingTool().run(None, document)
+
+        self.assertEqual(
+            list(result.image.getdata()),
+            [(255, 0, 0), (255, 0, 0), (0, 0, 255)],
+        )
+        ask_parameters.assert_called_once_with(
+            None,
+            "Mask threshold",
+            (("threshold", "Threshold", 0, 255, 1, 10),),
+        )
 
 
 if __name__ == "__main__":
