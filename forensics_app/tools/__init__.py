@@ -1,6 +1,7 @@
 """Register course functionality here so it appears in the sidebar."""
 
 from .channel_split import ChannelSplitTool
+from .channel_swap import ChannelSwapTool
 from .contrast_stretch import CLAHETool, ContrastStretchTool, HistogramEqualizationTool
 from .grayscale import GrayscaleTool
 from .image_info import ImageInfoTool
@@ -20,6 +21,7 @@ def build_tool_registry() -> ToolRegistry:
             HistogramEqualizationTool(),
             CLAHETool(),
             SkiFiltersTool(),
+            ChannelSwapTool(),
         ]
     )
 
