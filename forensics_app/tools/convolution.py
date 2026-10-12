@@ -15,21 +15,21 @@ KERNEL_DIRECTIONS = ("Horizontal", "Vertical", "2D")
 
 
 def create_kernel(kernel_size: int, direction: str) -> np.ndarray:
-    """Create a normalized box kernel in the selected direction."""
+    """Create a normalized 3D box kernel, with a singleton RGB channel axis."""
     if kernel_size < 1:
         raise ValueError("Kernel size must be a positive integer.")
 
     direction = direction.strip().lower()
     shapes = {
-        "horizontal": (1, kernel_size),
-        "vertical": (kernel_size, 1),
-        "2d": (kernel_size, kernel_size),
+        "horizontal": (1, kernel_size, 1),
+        "vertical": (kernel_size, 1, 1),
+        "2d": (kernel_size, kernel_size, 1),
     }
     if direction not in shapes:
         raise ValueError(f"Unsupported kernel direction: {direction}")
 
     shape = shapes[direction]
-    return np.ones(shape, dtype=float) / (shape[0] * shape[1])
+    return np.ones(shape, dtype=float) / (shape[0] * shape[1] * shape[2])
 
 
 def apply_convolution(
@@ -37,11 +37,11 @@ def apply_convolution(
     kernel_size: int,
     direction: str,
 ) -> Image.Image:
-    """Apply a normalized directional box kernel to a grayscale image."""
-    pixels = np.asarray(image.convert("L"), dtype=float)
+    """Apply a directional box kernel independently to each RGB channel."""
+    pixels = np.asarray(image.convert("RGB"), dtype=float)
     kernel = create_kernel(kernel_size, direction)
     result = ndimage.convolve(pixels, kernel)
-    return Image.fromarray(np.clip(result, 0, 255).astype(np.uint8))
+    return Image.fromarray(np.rint(np.clip(result, 0, 255)).astype(np.uint8))
 
 
 def ask_convolution_options(parent: tk.Misc) -> tuple[int, str] | None:

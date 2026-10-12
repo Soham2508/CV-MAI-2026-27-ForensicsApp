@@ -273,9 +273,9 @@ class ToolTests(unittest.TestCase):
 
     def test_convolution_kernels_match_direction_and_are_normalized(self) -> None:
         expected_shapes = {
-            "horizontal": (1, 3),
-            "vertical": (3, 1),
-            "2d": (3, 3),
+            "horizontal": (1, 3, 1),
+            "vertical": (3, 1, 1),
+            "2d": (3, 3, 1),
         }
         for direction, shape in expected_shapes.items():
             with self.subTest(direction=direction):
@@ -283,24 +283,40 @@ class ToolTests(unittest.TestCase):
                 self.assertEqual(kernel.shape, shape)
                 self.assertAlmostEqual(float(kernel.sum()), 1.0)
 
+    def test_convolution_kernel_size_sets_each_spatial_dimension(self) -> None:
+        self.assertEqual(create_kernel(5, "horizontal").shape, (1, 5, 1))
+        self.assertEqual(create_kernel(5, "vertical").shape, (5, 1, 1))
+        self.assertEqual(create_kernel(5, "2d").shape, (5, 5, 1))
+
     def test_convolution_rejects_invalid_kernel_options(self) -> None:
         with self.assertRaises(ValueError):
             create_kernel(0, "horizontal")
         with self.assertRaises(ValueError):
             create_kernel(3, "diagonal")
 
-    def test_convolution_preserves_constant_grayscale_intensity(self) -> None:
-        image = Image.new("RGB", (5, 4), (73, 73, 73))
+    def test_convolution_preserves_constant_rgb_channels(self) -> None:
+        image = Image.new("RGB", (5, 4), (73, 120, 201))
 
         output = apply_convolution(image, 3, "2d")
 
-        self.assertEqual(output.mode, "L")
+        self.assertEqual(output.mode, "RGB")
         self.assertEqual(output.size, image.size)
-        self.assertEqual(list(output.getdata()), [73] * 20)
+        self.assertEqual(list(output.getdata()), [(73, 120, 201)] * 20)
+
+    def test_convolution_filters_rgb_channels_independently(self) -> None:
+        image = Image.new("RGB", (3, 1))
+        image.putdata([(0, 30, 0), (90, 30, 0), (180, 30, 0)])
+
+        output = apply_convolution(image, 3, "horizontal")
+
+        self.assertEqual(
+            list(output.getdata()),
+            [(30, 30, 0), (90, 30, 0), (150, 30, 0)],
+        )
 
     def test_convolution_tool_uses_selected_options(self) -> None:
         document = ImageDocument()
-        document.current = Image.new("L", (3, 3), 90)
+        document.current = Image.new("RGB", (3, 3), (90, 120, 150))
         with patch(
             "forensics_app.tools.convolution.ask_convolution_options",
             return_value=(5, "vertical"),
@@ -308,7 +324,7 @@ class ToolTests(unittest.TestCase):
             result = ConvolutionTool().run(None, document)
 
         ask_options.assert_called_once_with(None)
-        self.assertEqual(result.image.mode, "L")
+        self.assertEqual(result.image.mode, "RGB")
         self.assertEqual(result.details["Kernel size"], "5")
         self.assertEqual(result.details["Direction"], "Vertical")
 
