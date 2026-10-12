@@ -7,6 +7,7 @@ from .grayscale import GrayscaleTool
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
 from .registry import ToolRegistry
+from .histogram import GrayscaleHistogramTool, RGBHistogramsTool
 from .ski_filters import SkiFiltersTool
 
 
@@ -22,6 +23,8 @@ def build_tool_registry() -> ToolRegistry:
             CLAHETool(),
             SkiFiltersTool(),
             ChannelSwapTool(),
+            GrayscaleHistogramTool(),
+            RGBHistogramsTool(),
         ]
     )
 
