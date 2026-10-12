@@ -9,6 +9,7 @@ from .grayscale import GrayscaleTool
 from .image_info import ImageInfoTool
 from .registry import ToolRegistry
 from .histogram import GrayscaleHistogramTool, RGBHistogramsTool
+from .convolution import ConvolutionTool
 
 def build_tool_registry() -> ToolRegistry:
     return ToolRegistry(
@@ -23,6 +24,7 @@ def build_tool_registry() -> ToolRegistry:
             ChannelSwapTool(),
             GrayscaleHistogramTool(),
             RGBHistogramsTool(),
+            ConvolutionTool(),
         ]
     )
 
