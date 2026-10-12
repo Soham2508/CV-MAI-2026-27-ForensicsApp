@@ -41,23 +41,23 @@ class SharpenTool(ForensicsTool):
     category = "Sharpening"
     description = "Sharpen the image with adjustable blur radius and amount."
 
-def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:
-    assert document.current is not None
-    parameters = ask_parameters(
-        parent,
-        self.title,
-        (
-            ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
-            ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
-        ),
-    )
-    if parameters is None:
-        return None
+    def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:
+        assert document.current is not None
+        parameters = ask_parameters(
+            parent,
+            self.title,
+            (
+                ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
+                ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
+            ),
+        )
+        if parameters is None:
+            return None
 
-    radius = parameters["radius"]
-    amount = parameters["amount"]
-    output = sharpen_image(document.current, radius, amount)
-    return ToolResult(
+        radius = parameters["radius"]
+        amount = parameters["amount"]
+        output = sharpen_image(document.current, radius, amount)
+        return ToolResult(
         image=output,
         message=f"Sharpened the image (radius={radius:g}, amount={amount:g}).",
         details={
