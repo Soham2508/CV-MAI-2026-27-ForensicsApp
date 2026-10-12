@@ -5,6 +5,14 @@ from PIL import Image
 from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
 from forensics_app.tools.channel_split import ChannelSplitTool, split_channels
+from forensics_app.tools.contrast_stretch import (
+    CLAHETool,
+    ContrastStretchTool,
+    HistogramEqualizationTool,
+    adaptive_histogram_equalization,
+    contrast_stretch_image,
+    equalize_histogram,
+)
 from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
@@ -22,6 +30,77 @@ class ToolTests(unittest.TestCase):
     def test_registry_rejects_duplicate_ids(self) -> None:
         with self.assertRaises(ValueError):
             ToolRegistry([GrayscaleTool(), GrayscaleTool()])
+
+    def test_enhancement_tools_are_registered_by_default(self) -> None:
+        tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
+        self.assertTrue(
+            {
+                ContrastStretchTool.tool_id,
+                HistogramEqualizationTool.tool_id,
+                CLAHETool.tool_id,
+            }.issubset(tool_ids)
+        )
+
+    def test_contrast_stretch_uses_percentiles_and_preserves_input(self) -> None:
+        image = Image.new("L", (4, 1))
+        image.putdata([0, 64, 128, 255])
+
+        output = contrast_stretch_image(image, 25, 75)
+
+        self.assertEqual(
+            list(output.getdata()),
+            [(0, 0, 0), (36, 36, 36), (182, 182, 182), (255, 255, 255)],
+        )
+        self.assertEqual(list(image.getdata()), [0, 64, 128, 255])
+
+    def test_contrast_stretch_rejects_invalid_percentile_order(self) -> None:
+        with self.assertRaises(ValueError):
+            contrast_stretch_image(Image.new("L", (1, 1)), 98, 2)
+
+    def test_histogram_equalization_spreads_a_grayscale_ramp(self) -> None:
+        image = Image.new("L", (4, 1))
+        image.putdata([0, 64, 128, 255])
+
+        output = equalize_histogram(image)
+
+        self.assertEqual(
+            list(output.getdata()),
+            [(63, 63, 63), (127, 127, 127), (191, 191, 191), (255, 255, 255)],
+        )
+        self.assertEqual(list(image.getdata()), [0, 64, 128, 255])
+
+    def test_histogram_equalization_preserves_constant_images(self) -> None:
+        image = Image.new("L", (3, 2), 73)
+        self.assertEqual(
+            list(equalize_histogram(image).getdata()), [(255, 255, 255)] * 6
+        )
+
+    def test_histogram_equalization_applies_to_rgb_channels(self) -> None:
+        image = Image.new("RGB", (2, 2), "red")
+
+        output = equalize_histogram(image)
+
+        self.assertEqual(output.mode, "RGB")
+        red, green, blue = output.getpixel((0, 0))
+        self.assertGreater(red, 240)
+        self.assertGreater(green, 240)
+        self.assertGreater(blue, 240)
+
+    def test_clahe_converts_input_to_rgb(self) -> None:
+        image = Image.new("RGBA", (16, 16))
+        image.putdata(
+            [(x * 16, y * 16, 100, 127) for y in range(16) for x in range(16)]
+        )
+
+        output = adaptive_histogram_equalization(image, clip_limit=0.03)
+
+        self.assertEqual(output.mode, "RGB")
+        self.assertEqual(output.size, image.size)
+        self.assertEqual(image.getpixel((0, 0)), (0, 0, 100, 127))
+
+    def test_clahe_rejects_invalid_clip_limit(self) -> None:
+        with self.assertRaises(ValueError):
+            adaptive_histogram_equalization(Image.new("L", (8, 8)), clip_limit=0)
 
     def test_channel_split_stacks_rgb_planes_without_mutating_input(self) -> None:
         image = Image.new("RGB", (2, 1))
