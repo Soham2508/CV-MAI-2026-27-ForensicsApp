@@ -1,46 +1,68 @@
-from tkinter import simpledialog
+"""Unsharp-mask image sharpening."""
 
-from PIL import ImageFilter
+from __future__ import annotations
+
+import math
+import tkinter as tk
+
+import numpy as np
+from PIL import Image
+from skimage.filters import gaussian
 
 from forensics_app.core import ImageDocument
+from forensics_app.utils import ask_parameters
+
 from .base import ForensicsTool, ToolResult
 
+def sharpen_image(
+    image: Image.Image, radius: float = 2.0, amount: float = 1.5
+) -> Image.Image:
+    """Sharpen using original + amount * (original - Gaussian blur)."""
+    if not math.isfinite(radius) or radius <= 0:
+        raise ValueError("Radius must be a finite number greater than zero.")
+    if not math.isfinite(amount) or amount < 0:
+        raise ValueError("Amount must be a finite number greater than or equal to zero.")
+
+    grayscale = image.mode in ("1", "L", "I", "F")
+    if grayscale:
+        original = np.asarray(image.convert("L"), dtype=np.float32) / 255.0
+        blurred = gaussian(original, sigma=radius)
+    else:
+        original = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
+        blurred = gaussian(original, sigma=radius, channel_axis=-1)
+
+    detail = original - blurred
+    sharpened = np.clip(original + amount * detail, 0.0, 1.0)
+    return Image.fromarray(np.round(sharpened * 255).astype(np.uint8))
 
 class SharpenTool(ForensicsTool):
     tool_id = "sharpen"
     title = "Sharpen image"
     category = "Sharpening"
-    description = "Sharpen the image with a configurable radius."
+    description = "Sharpen the image with adjustable blur radius and amount."
 
-    def run(self, parent, document: ImageDocument) -> ToolResult | None:
-        radius = simpledialog.askfloat(
-            "Sharpen image",
-            "Radius (try 2.0):",
-            parent=parent,
-            minvalue=0.1,
-            initialvalue=2.0,
-        )
+def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:
+    assert document.current is not None
+    parameters = ask_parameters(
+        parent,
+        self.title,
+        (
+            ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
+            ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
+        ),
+    )
+    if parameters is None:
+        return None
 
-        if radius is None:
-            return None  # The user cancelled the dialog.
-
-        assert document.current is not None
-
-        output = document.current.filter(
-            ImageFilter.UnsharpMask(
-                radius=radius,
-                percent=150,
-                threshold=3,
-            )
-        )
-
-        return ToolResult(
-            image=output,
-            message=f"Sharpened the image (radius={radius:g}).",
-            details={
-                "Operation": "Unsharp Mask",
-                "Radius": radius,
-                "Strength": "150%",
-                "Threshold": 3,
-            },
-        )
+    radius = parameters["radius"]
+    amount = parameters["amount"]
+    output = sharpen_image(document.current, radius, amount)
+    return ToolResult(
+        image=output,
+        message=f"Sharpened the image (radius={radius:g}, amount={amount:g}).",
+        details={
+            "Operation": "Unsharp mask",
+            "Blur radius (sigma)": radius,
+            "Sharpening amount": amount,
+        },
+    )
