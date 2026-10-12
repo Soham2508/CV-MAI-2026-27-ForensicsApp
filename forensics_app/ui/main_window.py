@@ -103,15 +103,53 @@ class MainWindow:
         ttk.Label(
             sidebar, text="Forensics tools", style="Title.TLabel", background="#eef1f5"
         ).pack(anchor="w", pady=(0, 12))
+
+        tool_panel = ttk.Frame(sidebar, style="Sidebar.TFrame")
+        tool_panel.pack(fill="both", expand=True)
+        self.sidebar_canvas = tk.Canvas(
+            tool_panel,
+            background="#eef1f5",
+            borderwidth=0,
+            highlightthickness=0,
+        )
+        scrollbar = ttk.Scrollbar(
+            tool_panel,
+            orient="vertical",
+            command=self.sidebar_canvas.yview,
+        )
+        self.sidebar_canvas.configure(yscrollcommand=scrollbar.set)
+        self.sidebar_canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        tool_list = ttk.Frame(self.sidebar_canvas, style="Sidebar.TFrame")
+        tool_list_window = self.sidebar_canvas.create_window(
+            (0, 0), window=tool_list, anchor="nw"
+        )
+        tool_list.bind(
+            "<Configure>",
+            lambda _event: self.sidebar_canvas.configure(
+                scrollregion=self.sidebar_canvas.bbox("all")
+            ),
+        )
+        self.sidebar_canvas.bind(
+            "<Configure>",
+            lambda event: self.sidebar_canvas.itemconfigure(
+                tool_list_window, width=event.width
+            ),
+        )
+        self.root.bind_all("<MouseWheel>", self._on_sidebar_mousewheel)
+        self.root.bind_all("<Button-4>", self._on_sidebar_mousewheel)
+        self.root.bind_all("<Button-5>", self._on_sidebar_mousewheel)
+
         for category, tools in self.registry.categories():
-            ttk.Label(sidebar, text=category, style="Category.TLabel").pack(
+            ttk.Label(tool_list, text=category, style="Category.TLabel").pack(
                 anchor="w", pady=(9, 4)
             )
             for tool in tools:
                 menu_options = getattr(tool, "menu_options", ())
                 if menu_options:
                     button = ttk.Menubutton(
-                        sidebar,
+                        tool_list,
                         text=tool.title,
                         style="Tool.TMenubutton",
                         direction="below",
@@ -127,7 +165,7 @@ class MainWindow:
                     button.configure(menu=menu)
                 else:
                     button = ttk.Button(
-                        sidebar,
+                        tool_list,
                         text=tool.title,
                         style="Tool.TButton",
                         command=lambda selected=tool: self.run_tool(selected),
@@ -164,6 +202,29 @@ class MainWindow:
             padding=(10, 6),
             relief="sunken",
         ).pack(fill="x")
+
+    def _on_sidebar_mousewheel(self, event: tk.Event) -> str | None:
+        """Scroll the tool list only when the pointer is over its viewport."""
+        canvas = self.sidebar_canvas
+        left = canvas.winfo_rootx()
+        top = canvas.winfo_rooty()
+        if not (
+            left <= event.x_root < left + canvas.winfo_width()
+            and top <= event.y_root < top + canvas.winfo_height()
+        ):
+            return None
+
+        if event.num == 4:
+            units = -1
+        elif event.num == 5:
+            units = 1
+        else:
+            units = -int(event.delta / 120)
+            if units == 0 and event.delta:
+                units = -1 if event.delta > 0 else 1
+        if units:
+            canvas.yview_scroll(units, "units")
+        return "break"
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda _event: self.open_image())

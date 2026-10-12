@@ -106,7 +106,7 @@ def ask_convolution_options(parent: tk.Misc) -> tuple[int, str] | None:
 class ConvolutionTool(ForensicsTool):
     tool_id = "convolution"
     title = "Convolution"
-    category = "Filtering"
+    category = "Filtering & Edges"
     description = "Apply a directional mean kernel."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:

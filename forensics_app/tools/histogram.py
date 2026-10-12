@@ -17,7 +17,7 @@ CHANNEL_COLORS = {"R": "red", "G": "green", "B": "blue"}
 class HistogramTool(ForensicsTool):
     tool_id = "histogram"
     title = "Histogram"
-    category = "Image analysis"
+    category = "Inspect & Analyze"
     description = "Choose a grayscale or color-channel histogram to display."
     menu_options = HISTOGRAM_OPTIONS
 

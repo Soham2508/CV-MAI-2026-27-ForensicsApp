@@ -81,7 +81,7 @@ def ask_channel_pair(parent: tk.Misc) -> tuple[str, str] | None:
 class ChannelSwapTool(ForensicsTool):
     tool_id = "channel_swap"
     title = "Swap color channels"
-    category = "Color Swap"
+    category = "Color & Tone"
     description = "Choose any two RGB channels to exchange."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:

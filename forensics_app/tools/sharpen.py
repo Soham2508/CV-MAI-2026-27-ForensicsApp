@@ -38,7 +38,7 @@ def sharpen_image(
 class SharpenTool(ForensicsTool):
     tool_id = "sharpen"
     title = "Sharpen image"
-    category = "Sharpening"
+    category = "Filtering & Edges"
     description = "Sharpen the image with adjustable blur radius and amount."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:

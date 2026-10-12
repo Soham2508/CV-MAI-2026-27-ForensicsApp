@@ -162,8 +162,8 @@ def ask_filter_options(parent: tk.Misc) -> tuple[str, float, str] | None:
 
 class SkiFiltersTool(ForensicsTool):
     tool_id = "ski_filters"
-    title = "Spatial filters"
-    category = "Image enhancement"
+    title = "Skimage filters"
+    category = "Filtering & Edges"
     description = "Apply a Gaussian, Prewitt, Sobel, Scharr, median, or unsharp mask."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:

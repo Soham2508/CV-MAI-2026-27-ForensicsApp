@@ -72,8 +72,9 @@ class ToolTests(unittest.TestCase):
 
     def test_registry_registers_one_channel_swap_tool(self) -> None:
         tools = build_tool_registry().all()
-        swaps = [tool for tool in tools if tool.category == "Color Swap"]
+        swaps = [tool for tool in tools if isinstance(tool, ChannelSwapTool)]
         self.assertEqual(len(swaps), 1)
+        self.assertEqual(swaps[0].category, "Color & Tone")
         self.assertIsInstance(swaps[0], ChannelSwapTool)
 
     def test_registry_registers_one_histogram_tool_with_all_options(self) -> None:

@@ -45,7 +45,7 @@ def split_channels(image: Image.Image) -> tuple[Image.Image, tuple[str, ...]]:
 class ChannelSplitTool(ForensicsTool):
     tool_id = "channel_split"
     title = "Split color channels"
-    category = "Image analysis"
+    category = "Inspect & Analyze"
     description = "View each color channel as a stacked grayscale plane."
 
     def run(self, _parent: tk.Misc, document: ImageDocument) -> ToolResult:
