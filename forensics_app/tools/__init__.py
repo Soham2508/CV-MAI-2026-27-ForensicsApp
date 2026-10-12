@@ -10,6 +10,7 @@ from .masking import MaskingTool
 from .registry import ToolRegistry
 from .convolution import ConvolutionTool
 from .ski_filters import SkiFiltersTool
+from .sharpen import SharpenTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -26,6 +27,7 @@ def build_tool_registry() -> ToolRegistry:
             ChannelSwapTool(),
             ConvolutionTool(),
             HistogramTool(),
+            SharpenTool(),
         ]
     )
 
