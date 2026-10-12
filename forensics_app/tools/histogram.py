@@ -36,7 +36,7 @@ class GrayscaleHistogramTool(ForensicsTool):
 
 class RGBHistogramsTool(ForensicsTool):
     tool_id = "rgb_histograms"
-    title = "RGB histograms"
+    title = "RGB histograms 2x2 plot"
     category = "Image analysis"
     description = "Show separate red, green, and blue histograms plus an overlay."
 
