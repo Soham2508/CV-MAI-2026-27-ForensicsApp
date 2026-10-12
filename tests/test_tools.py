@@ -1,6 +1,6 @@
-import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import unittest
 from unittest.mock import patch
 
 from PIL import Image
@@ -20,6 +20,7 @@ from forensics_app.tools.contrast_stretch import (
 from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
+from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
 
 
 class ToolTests(unittest.TestCase):
@@ -179,6 +180,53 @@ class ToolTests(unittest.TestCase):
         tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
         self.assertIn(ChannelSplitTool.tool_id, tool_ids)
 
+    def test_spatial_filter_tool_is_registered_by_default(self) -> None:
+        tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
+        self.assertIn(SkiFiltersTool.tool_id, tool_ids)
+
+    def test_spatial_filters_return_rgb_images_without_mutating_input(self) -> None:
+        image = Image.new("RGB", (5, 5), (32, 96, 160))
+        image.putpixel((2, 2), (255, 0, 64))
+
+        for filter_name in (
+            "gaussian",
+            "prewitt",
+            "sobel",
+            "scharr",
+            "median",
+            "unsharp_mask",
+        ):
+            with self.subTest(filter_name=filter_name):
+                output = apply_ski_filter(image, filter_name, sigma=1.5)
+                self.assertEqual(output.mode, "RGB")
+                self.assertEqual(output.size, image.size)
+                self.assertEqual(image.getpixel((2, 2)), (255, 0, 64))
+
+    def test_spatial_filters_support_direct_rgb_mode(self) -> None:
+        image = Image.new("RGB", (5, 5), (32, 96, 160))
+        image.putpixel((2, 2), (255, 0, 64))
+
+        for filter_name in (
+            "gaussian",
+            "prewitt",
+            "sobel",
+            "scharr",
+            "median",
+            "unsharp_mask",
+        ):
+            with self.subTest(filter_name=filter_name):
+                output = apply_ski_filter(image, filter_name, mode="direct")
+                self.assertEqual(output.mode, "RGB")
+                self.assertEqual(output.size, image.size)
+
+    def test_spatial_filter_rejects_unknown_mode(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_ski_filter(Image.new("RGB", (2, 2)), "sobel", mode="unknown")
+
+    def test_gaussian_filter_rejects_nonpositive_sigma(self) -> None:
+        with self.assertRaises(ValueError):
+            apply_ski_filter(Image.new("RGB", (2, 2)), "gaussian", sigma=0)
+
     def test_masking_keeps_only_pixels_brighter_than_threshold(self) -> None:
         image = Image.new("L", (3, 1))
         image.putdata([50, 135, 200])
@@ -201,9 +249,7 @@ class ToolTests(unittest.TestCase):
         base = Image.new("RGB", (2, 1), "red")
         texture = Image.new("RGB", (1, 1), "blue")
 
-        output = MaskingTool().composite_masked_texture(
-            mask_source, base, texture
-        )
+        output = MaskingTool().composite_masked_texture(mask_source, base, texture)
 
         self.assertEqual(output.size, base.size)
         self.assertEqual(list(output.getdata()), [(255, 0, 0), (0, 0, 255)])
