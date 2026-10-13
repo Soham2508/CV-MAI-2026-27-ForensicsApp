@@ -32,7 +32,7 @@ def sharpen_image(
         original = np.asarray(image.convert("RGB"), dtype=np.float32) / 255.0
         blurred = gaussian(original, sigma=radius, channel_axis=-1)
 
-    detail = original - blurred
+    detail = original.copy() - blurred
     sharpened = np.clip(original + amount * detail, 0.0, 1.0)
     return Image.fromarray(np.round(sharpened * 255).astype(np.uint8))
 

@@ -29,7 +29,7 @@ from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
-from forensics_app.tools.sharpen import SharpenTool
+from forensics_app.tools.sharpen import SharpenTool, sharpen_image
 from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
 from forensics_app.utils.parameter_dialog import ParameterField
 
@@ -619,6 +619,24 @@ class ToolTests(unittest.TestCase):
             "Mask threshold",
             (("threshold", "Threshold", 0, 255, 1, 10),),
         )
+
+    def test_sharpen_image_preserves_uniform_pixels(self) -> None:
+        image = Image.new("RGB", (8, 8), (200, 120, 40))
+
+        output = sharpen_image(image)
+
+        self.assertEqual(output.mode, "RGB")
+        self.assertEqual(list(output.getdata()), list(image.getdata()))
+
+    def test_sharpen_image_enhances_edges_without_losing_flat_regions(self) -> None:
+        pixels = np.zeros((9, 9), dtype=np.uint8)
+        pixels[:, 4:] = 100
+        image = Image.fromarray(pixels)
+
+        output = sharpen_image(image, radius=1.0, amount=1.5)
+
+        self.assertGreater(output.getpixel((4, 4)), image.getpixel((4, 4)))
+        self.assertEqual(output.getpixel((8, 4)), image.getpixel((8, 4)))
 
     def test_sharpen_tool_uses_parameter_dialog(self) -> None:
         document = ImageDocument()
