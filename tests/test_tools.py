@@ -24,12 +24,13 @@ from forensics_app.tools.convolution import (
     apply_convolution,
     create_kernel,
 )
+from forensics_app.tools.edge_overlay import EdgeOverlayTool, overlay_edges
 from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
-from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
 from forensics_app.tools.sharpen import SharpenTool
+from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
 from forensics_app.utils.parameter_dialog import ParameterField
 
 
@@ -145,6 +146,94 @@ class ToolTests(unittest.TestCase):
 
         self.assertIsNone(result)
         canny.assert_not_called()
+
+    def test_edge_overlay_draws_selected_color_over_original(self) -> None:
+        image = Image.new("RGB", (5, 5), "white")
+        edges = np.zeros((5, 5), dtype=bool)
+        edges[2, 2] = True
+
+        with patch(
+            "forensics_app.tools.edge_overlay.canny", return_value=edges
+        ) as canny:
+            output = overlay_edges(
+                image,
+                "Magenta",
+                sigma=1.5,
+                low_threshold=0.15,
+                high_threshold=0.45,
+            )
+
+        self.assertEqual(output.size, image.size)
+        self.assertEqual(output.mode, "RGB")
+        self.assertEqual(output.getpixel((2, 2)), (255, 0, 255))
+        self.assertEqual(output.getpixel((0, 0)), (255, 255, 255))
+        self.assertEqual(image.getpixel((2, 2)), (255, 255, 255))
+        self.assertEqual(canny.call_args.kwargs["sigma"], 1.5)
+        self.assertEqual(canny.call_args.kwargs["low_threshold"], 0.15)
+        self.assertEqual(canny.call_args.kwargs["high_threshold"], 0.45)
+
+    def test_edge_overlay_expands_edges_to_selected_line_width(self) -> None:
+        image = Image.new("RGB", (5, 5), "white")
+        edges = np.zeros((5, 5), dtype=bool)
+        edges[2, 2] = True
+
+        with patch("forensics_app.tools.edge_overlay.canny", return_value=edges):
+            output = overlay_edges(image, "Red", line_width=3)
+
+        self.assertEqual(output.getpixel((1, 1)), (255, 0, 0))
+        self.assertEqual(output.getpixel((3, 3)), (255, 0, 0))
+        self.assertEqual(output.getpixel((0, 0)), (255, 255, 255))
+
+    def test_edge_overlay_rejects_invalid_color_and_line_width(self) -> None:
+        image = Image.new("RGB", (1, 1))
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Orange")
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Red", line_width=0)
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Red", sigma=-1)
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Red", low_threshold=0.8, high_threshold=0.2)
+
+    def test_edge_overlay_tool_uses_configured_canny_options(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), "white")
+
+        with (
+            patch(
+                "forensics_app.tools.edge_overlay.ask_edge_options",
+                return_value=("Blue", 4, 2.5, 0.15, 0.45),
+            ),
+            patch(
+                "forensics_app.tools.edge_overlay.overlay_edges",
+                return_value=document.current,
+            ) as apply_overlay,
+        ):
+            result = EdgeOverlayTool().run(None, document)
+
+        apply_overlay.assert_called_once_with(
+            document.current, "Blue", 4, 2.5, 0.15, 0.45
+        )
+        self.assertEqual(result.details["Edge color"], "Blue")
+        self.assertEqual(result.details["Line width"], "4 px")
+        self.assertEqual(result.details["Sigma"], 2.5)
+        self.assertEqual(result.details["Low threshold"], 0.15)
+        self.assertEqual(result.details["High threshold"], 0.45)
+
+    def test_edge_overlay_tool_returns_none_when_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with patch(
+            "forensics_app.tools.edge_overlay.ask_edge_options", return_value=None
+        ):
+            result = EdgeOverlayTool().run(None, document)
+
+        self.assertIsNone(result)
+
+    def test_edge_overlay_tool_is_registered_by_default(self) -> None:
+        tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
+        self.assertIn(EdgeOverlayTool.tool_id, tool_ids)
 
     def test_registry_registers_one_channel_swap_tool(self) -> None:
         tools = build_tool_registry().all()
@@ -290,16 +379,68 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(list(output.getdata()), [10, 40, 20, 50, 30, 60])
         self.assertEqual(image.mode, "RGB")
 
-    def test_channel_split_includes_alpha_and_grayscale_intensity(self) -> None:
+    def test_channel_split_returns_selected_channel_as_grayscale(self) -> None:
+        image = Image.new("RGB", (2, 1))
+        image.putdata([(10, 20, 30), (40, 50, 60)])
+
+        for selection, expected_name, expected_values in (
+            ("R", "Red", [10, 40]),
+            ("G", "Green", [20, 50]),
+            ("B", "Blue", [30, 60]),
+        ):
+            with self.subTest(selection=selection):
+                output, names = split_channels(image, selection)
+                self.assertEqual(names, (expected_name,))
+                self.assertEqual(output.mode, "L")
+                self.assertEqual(output.size, (2, 1))
+                self.assertEqual(list(output.getdata()), expected_values)
+
+    def test_channel_split_ignores_alpha_and_handles_grayscale(self) -> None:
         rgba = Image.new("RGBA", (1, 1), (10, 20, 30, 40))
         output, names = split_channels(rgba)
-        self.assertEqual(names, ("Red", "Green", "Blue", "Alpha"))
-        self.assertEqual(list(output.getdata()), [10, 20, 30, 40])
+        self.assertEqual(names, ("Red", "Green", "Blue"))
+        self.assertEqual(list(output.getdata()), [10, 20, 30])
 
         grayscale = Image.new("L", (1, 1), 73)
         output, names = split_channels(grayscale)
-        self.assertEqual(names, ("Intensity",))
+        self.assertEqual(names, ("Red", "Green", "Blue"))
         self.assertEqual(output.getpixel((0, 0)), 73)
+        self.assertEqual(output.size, (1, 3))
+
+    def test_channel_split_rejects_unsupported_selection(self) -> None:
+        with self.assertRaises(ValueError):
+            split_channels(Image.new("RGB", (1, 1)), "Alpha")
+
+    def test_channel_split_tool_exposes_histogram_style_menu_options(self) -> None:
+        self.assertEqual(
+            ChannelSplitTool.menu_options, ("R", "G", "B", "All three")
+        )
+
+    def test_channel_split_tool_uses_selected_channel_action(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), (10, 20, 30))
+
+        result = ChannelSplitTool().run_action(None, document, "G")
+
+        self.assertEqual(result.image.getpixel((0, 0)), 20)
+        self.assertEqual(result.details["Channels"], "Green")
+        self.assertEqual(result.details["Display"], "Single grayscale plane")
+
+    def test_channel_split_tool_defaults_to_all_channels(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), (10, 20, 30))
+
+        result = ChannelSplitTool().run(None, document)
+
+        self.assertEqual(result.image.size, (1, 3))
+        self.assertEqual(result.details["Channels"], "Red, Green, Blue")
+
+    def test_channel_split_tool_rejects_unknown_action(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with self.assertRaises(ValueError):
+            ChannelSplitTool().run_action(None, document, "Alpha")
 
     def test_channel_split_tool_is_registered_by_default(self) -> None:
         tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
