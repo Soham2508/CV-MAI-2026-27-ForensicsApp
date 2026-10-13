@@ -10,7 +10,7 @@ from PIL import Image
 from skimage.filters import gaussian
 
 from forensics_app.core import ImageDocument
-from forensics_app.utils.parameter_dialog import ask_parameters
+from forensics_app.utils.parameter_dialog import ParameterField, ask_parameters
 
 from .base import ForensicsTool, ToolResult
 
@@ -49,7 +49,16 @@ class SharpenTool(ForensicsTool):
             parent,
             self.title,
             (
-                ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
+                ParameterField(
+                    "radius",
+                    "Gaussian blur radius (sigma)",
+                    0.1,
+                    10.0,
+                    0.1,
+                    2.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
                 ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
             ),
         )

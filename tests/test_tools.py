@@ -3,10 +3,12 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
+from forensics_app.tools.canny import CannyTool
 from forensics_app.tools.channel_split import ChannelSplitTool, split_channels
 from forensics_app.tools.channel_swap import ChannelSwapTool, swap_channels
 from forensics_app.tools.contrast_stretch import (
@@ -28,6 +30,7 @@ from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
 from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
 from forensics_app.tools.sharpen import SharpenTool
+from forensics_app.utils.parameter_dialog import ParameterField
 
 
 class ToolTests(unittest.TestCase):
@@ -70,6 +73,78 @@ class ToolTests(unittest.TestCase):
             result = ChannelSwapTool().run(None, document)
 
         self.assertIsNone(result)
+
+    def test_canny_tool_uses_configured_thresholds(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (2, 2), "white")
+        edges = np.array([[True, False], [False, True]])
+
+        with (
+            patch(
+                "forensics_app.tools.canny.ask_parameters",
+                return_value={"sigma": 18.0, "low": 0.15, "high": 0.45},
+            ) as ask_parameters,
+            patch("forensics_app.tools.canny.canny", return_value=edges) as canny,
+        ):
+            result = CannyTool().run(None, document)
+
+        ask_parameters.assert_called_once()
+        _, title, fields, validator = ask_parameters.call_args.args
+        self.assertEqual(title, "Canny edge detection")
+        self.assertEqual(
+            fields,
+            (
+                ParameterField(
+                    "sigma",
+                    "Sigma",
+                    0.0,
+                    10.0,
+                    0.1,
+                    1.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "low",
+                    "Low threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.1,
+                    show_input=True,
+                ),
+                ParameterField(
+                    "high",
+                    "High threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.2,
+                    show_input=True,
+                ),
+            ),
+        )
+        self.assertIsNone(validator({"low": 0.2, "high": 0.2}))
+        self.assertIsNotNone(validator({"low": 0.3, "high": 0.2}))
+        canny.assert_called_once()
+        self.assertEqual(canny.call_args.kwargs["sigma"], 18.0)
+        self.assertEqual(canny.call_args.kwargs["low_threshold"], 0.15)
+        self.assertEqual(canny.call_args.kwargs["high_threshold"], 0.45)
+        self.assertEqual(result.details["Low threshold"], 0.15)
+        self.assertEqual(result.details["High threshold"], 0.45)
+
+    def test_canny_tool_returns_none_when_threshold_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with (
+            patch("forensics_app.tools.canny.ask_parameters", return_value=None),
+            patch("forensics_app.tools.canny.canny") as canny,
+        ):
+            result = CannyTool().run(None, document)
+
+        self.assertIsNone(result)
+        canny.assert_not_called()
 
     def test_registry_registers_one_channel_swap_tool(self) -> None:
         tools = build_tool_registry().all()
@@ -410,7 +485,7 @@ class ToolTests(unittest.TestCase):
 
         with patch(
             "forensics_app.tools.sharpen.ask_parameters",
-            return_value={"radius": 2.5, "amount": 1.2},
+            return_value={"radius": 18.0, "amount": 1.2},
         ) as ask_parameters:
             result = SharpenTool().run(None, document)
 
@@ -418,12 +493,21 @@ class ToolTests(unittest.TestCase):
             None,
             "Sharpen image",
             (
-                ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
+                ParameterField(
+                    "radius",
+                    "Gaussian blur radius (sigma)",
+                    0.1,
+                    10.0,
+                    0.1,
+                    2.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
                 ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
             ),
         )
         self.assertEqual(result.image.size, document.current.size)
-        self.assertEqual(result.details["Blur radius (sigma)"], 2.5)
+        self.assertEqual(result.details["Blur radius (sigma)"], 18.0)
         self.assertEqual(result.details["Sharpening amount"], 1.2)
 
     def test_sharpen_tool_returns_none_when_parameter_dialog_is_cancelled(self) -> None:
