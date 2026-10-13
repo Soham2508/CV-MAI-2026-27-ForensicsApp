@@ -45,7 +45,7 @@ def _mask_array(image: Image.Image, threshold: int) -> np.ndarray:
 class MaskingTool(ForensicsTool):
     tool_id = "masking"
     title = "Apply textured mask"
-    category = "Image analysis"
+    category = "Masking & Compositing"
     description = (
         "Use the open image as a mask source, then choose a base image and texture."
     )

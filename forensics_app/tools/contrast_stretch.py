@@ -48,7 +48,7 @@ def adaptive_histogram_equalization(
 class ContrastStretchTool(ForensicsTool):
     tool_id = "contrast_stretch"
     title = "Contrast stretching"
-    category = "Image enhancement"
+    category = "Color & Tone"
     description = "Stretch RGB intensity values between adjustable percentiles."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:
@@ -85,7 +85,7 @@ class ContrastStretchTool(ForensicsTool):
 class HistogramEqualizationTool(ForensicsTool):
     tool_id = "histogram_equalization"
     title = "Histogram equalization"
-    category = "Image enhancement"
+    category = "Color & Tone"
     description = "Equalize the image histogram."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult:
@@ -100,7 +100,7 @@ class HistogramEqualizationTool(ForensicsTool):
 class CLAHETool(ForensicsTool):
     tool_id = "clahe"
     title = "Adaptive histogram equalization (CLAHE)"
-    category = "Image enhancement"
+    category = "Color & Tone"
     description = "Apply CLAHE with an adjustable clip limit."
 
     def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:

@@ -3,10 +3,12 @@ from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
+from forensics_app.tools.canny import CannyTool
 from forensics_app.tools.channel_split import ChannelSplitTool, split_channels
 from forensics_app.tools.channel_swap import ChannelSwapTool, swap_channels
 from forensics_app.tools.contrast_stretch import (
@@ -17,11 +19,19 @@ from forensics_app.tools.contrast_stretch import (
     contrast_stretch_image,
     equalize_histogram,
 )
+from forensics_app.tools.convolution import (
+    ConvolutionTool,
+    apply_convolution,
+    create_kernel,
+)
+from forensics_app.tools.edge_overlay import EdgeOverlayTool, overlay_edges
 from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
+from forensics_app.tools.sharpen import SharpenTool
 from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
+from forensics_app.utils.parameter_dialog import ParameterField
 
 
 class ToolTests(unittest.TestCase):
@@ -65,10 +75,171 @@ class ToolTests(unittest.TestCase):
 
         self.assertIsNone(result)
 
+    def test_canny_tool_uses_configured_thresholds(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (2, 2), "white")
+        edges = np.array([[True, False], [False, True]])
+
+        with (
+            patch(
+                "forensics_app.tools.canny.ask_parameters",
+                return_value={"sigma": 18.0, "low": 0.15, "high": 0.45},
+            ) as ask_parameters,
+            patch("forensics_app.tools.canny.canny", return_value=edges) as canny,
+        ):
+            result = CannyTool().run(None, document)
+
+        ask_parameters.assert_called_once()
+        _, title, fields, validator = ask_parameters.call_args.args
+        self.assertEqual(title, "Canny edge detection")
+        self.assertEqual(
+            fields,
+            (
+                ParameterField(
+                    "sigma",
+                    "Sigma",
+                    0.0,
+                    10.0,
+                    0.1,
+                    1.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "low",
+                    "Low threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.1,
+                    show_input=True,
+                ),
+                ParameterField(
+                    "high",
+                    "High threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.2,
+                    show_input=True,
+                ),
+            ),
+        )
+        self.assertIsNone(validator({"low": 0.2, "high": 0.2}))
+        self.assertIsNotNone(validator({"low": 0.3, "high": 0.2}))
+        canny.assert_called_once()
+        self.assertEqual(canny.call_args.kwargs["sigma"], 18.0)
+        self.assertEqual(canny.call_args.kwargs["low_threshold"], 0.15)
+        self.assertEqual(canny.call_args.kwargs["high_threshold"], 0.45)
+        self.assertEqual(result.details["Low threshold"], 0.15)
+        self.assertEqual(result.details["High threshold"], 0.45)
+
+    def test_canny_tool_returns_none_when_threshold_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with (
+            patch("forensics_app.tools.canny.ask_parameters", return_value=None),
+            patch("forensics_app.tools.canny.canny") as canny,
+        ):
+            result = CannyTool().run(None, document)
+
+        self.assertIsNone(result)
+        canny.assert_not_called()
+
+    def test_edge_overlay_draws_selected_color_over_original(self) -> None:
+        image = Image.new("RGB", (5, 5), "white")
+        edges = np.zeros((5, 5), dtype=bool)
+        edges[2, 2] = True
+
+        with patch(
+            "forensics_app.tools.edge_overlay.canny", return_value=edges
+        ) as canny:
+            output = overlay_edges(
+                image,
+                "Magenta",
+                sigma=1.5,
+                low_threshold=0.15,
+                high_threshold=0.45,
+            )
+
+        self.assertEqual(output.size, image.size)
+        self.assertEqual(output.mode, "RGB")
+        self.assertEqual(output.getpixel((2, 2)), (255, 0, 255))
+        self.assertEqual(output.getpixel((0, 0)), (255, 255, 255))
+        self.assertEqual(image.getpixel((2, 2)), (255, 255, 255))
+        self.assertEqual(canny.call_args.kwargs["sigma"], 1.5)
+        self.assertEqual(canny.call_args.kwargs["low_threshold"], 0.15)
+        self.assertEqual(canny.call_args.kwargs["high_threshold"], 0.45)
+
+    def test_edge_overlay_expands_edges_to_selected_line_width(self) -> None:
+        image = Image.new("RGB", (5, 5), "white")
+        edges = np.zeros((5, 5), dtype=bool)
+        edges[2, 2] = True
+
+        with patch("forensics_app.tools.edge_overlay.canny", return_value=edges):
+            output = overlay_edges(image, "Red", line_width=3)
+
+        self.assertEqual(output.getpixel((1, 1)), (255, 0, 0))
+        self.assertEqual(output.getpixel((3, 3)), (255, 0, 0))
+        self.assertEqual(output.getpixel((0, 0)), (255, 255, 255))
+
+    def test_edge_overlay_rejects_invalid_color_and_line_width(self) -> None:
+        image = Image.new("RGB", (1, 1))
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Orange")
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Red", line_width=0)
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Red", sigma=-1)
+        with self.assertRaises(ValueError):
+            overlay_edges(image, "Red", low_threshold=0.8, high_threshold=0.2)
+
+    def test_edge_overlay_tool_uses_configured_canny_options(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), "white")
+
+        with (
+            patch(
+                "forensics_app.tools.edge_overlay.ask_edge_options",
+                return_value=("Blue", 4, 2.5, 0.15, 0.45),
+            ),
+            patch(
+                "forensics_app.tools.edge_overlay.overlay_edges",
+                return_value=document.current,
+            ) as apply_overlay,
+        ):
+            result = EdgeOverlayTool().run(None, document)
+
+        apply_overlay.assert_called_once_with(
+            document.current, "Blue", 4, 2.5, 0.15, 0.45
+        )
+        self.assertEqual(result.details["Edge color"], "Blue")
+        self.assertEqual(result.details["Line width"], "4 px")
+        self.assertEqual(result.details["Sigma"], 2.5)
+        self.assertEqual(result.details["Low threshold"], 0.15)
+        self.assertEqual(result.details["High threshold"], 0.45)
+
+    def test_edge_overlay_tool_returns_none_when_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with patch(
+            "forensics_app.tools.edge_overlay.ask_edge_options", return_value=None
+        ):
+            result = EdgeOverlayTool().run(None, document)
+
+        self.assertIsNone(result)
+
+    def test_edge_overlay_tool_is_registered_by_default(self) -> None:
+        tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
+        self.assertIn(EdgeOverlayTool.tool_id, tool_ids)
+
     def test_registry_registers_one_channel_swap_tool(self) -> None:
         tools = build_tool_registry().all()
-        swaps = [tool for tool in tools if tool.category == "Color Swap"]
+        swaps = [tool for tool in tools if isinstance(tool, ChannelSwapTool)]
         self.assertEqual(len(swaps), 1)
+        self.assertEqual(swaps[0].category, "Color & Tone")
         self.assertIsInstance(swaps[0], ChannelSwapTool)
 
     def test_registry_registers_one_histogram_tool_with_all_options(self) -> None:
@@ -208,16 +379,68 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(list(output.getdata()), [10, 40, 20, 50, 30, 60])
         self.assertEqual(image.mode, "RGB")
 
-    def test_channel_split_includes_alpha_and_grayscale_intensity(self) -> None:
+    def test_channel_split_returns_selected_channel_as_grayscale(self) -> None:
+        image = Image.new("RGB", (2, 1))
+        image.putdata([(10, 20, 30), (40, 50, 60)])
+
+        for selection, expected_name, expected_values in (
+            ("R", "Red", [10, 40]),
+            ("G", "Green", [20, 50]),
+            ("B", "Blue", [30, 60]),
+        ):
+            with self.subTest(selection=selection):
+                output, names = split_channels(image, selection)
+                self.assertEqual(names, (expected_name,))
+                self.assertEqual(output.mode, "L")
+                self.assertEqual(output.size, (2, 1))
+                self.assertEqual(list(output.getdata()), expected_values)
+
+    def test_channel_split_ignores_alpha_and_handles_grayscale(self) -> None:
         rgba = Image.new("RGBA", (1, 1), (10, 20, 30, 40))
         output, names = split_channels(rgba)
-        self.assertEqual(names, ("Red", "Green", "Blue", "Alpha"))
-        self.assertEqual(list(output.getdata()), [10, 20, 30, 40])
+        self.assertEqual(names, ("Red", "Green", "Blue"))
+        self.assertEqual(list(output.getdata()), [10, 20, 30])
 
         grayscale = Image.new("L", (1, 1), 73)
         output, names = split_channels(grayscale)
-        self.assertEqual(names, ("Intensity",))
+        self.assertEqual(names, ("Red", "Green", "Blue"))
         self.assertEqual(output.getpixel((0, 0)), 73)
+        self.assertEqual(output.size, (1, 3))
+
+    def test_channel_split_rejects_unsupported_selection(self) -> None:
+        with self.assertRaises(ValueError):
+            split_channels(Image.new("RGB", (1, 1)), "Alpha")
+
+    def test_channel_split_tool_exposes_histogram_style_menu_options(self) -> None:
+        self.assertEqual(
+            ChannelSplitTool.menu_options, ("R", "G", "B", "All three")
+        )
+
+    def test_channel_split_tool_uses_selected_channel_action(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), (10, 20, 30))
+
+        result = ChannelSplitTool().run_action(None, document, "G")
+
+        self.assertEqual(result.image.getpixel((0, 0)), 20)
+        self.assertEqual(result.details["Channels"], "Green")
+        self.assertEqual(result.details["Display"], "Single grayscale plane")
+
+    def test_channel_split_tool_defaults_to_all_channels(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1), (10, 20, 30))
+
+        result = ChannelSplitTool().run(None, document)
+
+        self.assertEqual(result.image.size, (1, 3))
+        self.assertEqual(result.details["Channels"], "Red, Green, Blue")
+
+    def test_channel_split_tool_rejects_unknown_action(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with self.assertRaises(ValueError):
+            ChannelSplitTool().run_action(None, document, "Alpha")
 
     def test_channel_split_tool_is_registered_by_default(self) -> None:
         tool_ids = {tool.tool_id for tool in build_tool_registry().all()}
@@ -265,6 +488,74 @@ class ToolTests(unittest.TestCase):
     def test_spatial_filter_rejects_unknown_mode(self) -> None:
         with self.assertRaises(ValueError):
             apply_ski_filter(Image.new("RGB", (2, 2)), "sobel", mode="unknown")
+
+    def test_convolution_kernels_match_direction_and_are_normalized(self) -> None:
+        expected_shapes = {
+            "horizontal": (1, 3, 1),
+            "vertical": (3, 1, 1),
+            "2d": (3, 3, 1),
+        }
+        for direction, shape in expected_shapes.items():
+            with self.subTest(direction=direction):
+                kernel = create_kernel(3, direction)
+                self.assertEqual(kernel.shape, shape)
+                self.assertAlmostEqual(float(kernel.sum()), 1.0)
+
+    def test_convolution_kernel_size_sets_each_spatial_dimension(self) -> None:
+        self.assertEqual(create_kernel(5, "horizontal").shape, (1, 5, 1))
+        self.assertEqual(create_kernel(5, "vertical").shape, (5, 1, 1))
+        self.assertEqual(create_kernel(5, "2d").shape, (5, 5, 1))
+
+    def test_convolution_rejects_invalid_kernel_options(self) -> None:
+        with self.assertRaises(ValueError):
+            create_kernel(0, "horizontal")
+        with self.assertRaises(ValueError):
+            create_kernel(3, "diagonal")
+
+    def test_convolution_preserves_constant_rgb_channels(self) -> None:
+        image = Image.new("RGB", (5, 4), (73, 120, 201))
+
+        output = apply_convolution(image, 3, "2d")
+
+        self.assertEqual(output.mode, "RGB")
+        self.assertEqual(output.size, image.size)
+        self.assertEqual(list(output.getdata()), [(73, 120, 201)] * 20)
+
+    def test_convolution_filters_rgb_channels_independently(self) -> None:
+        image = Image.new("RGB", (3, 1))
+        image.putdata([(0, 30, 0), (90, 30, 0), (180, 30, 0)])
+
+        output = apply_convolution(image, 3, "horizontal")
+
+        self.assertEqual(
+            list(output.getdata()),
+            [(30, 30, 0), (90, 30, 0), (150, 30, 0)],
+        )
+
+    def test_convolution_tool_uses_selected_options(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (3, 3), (90, 120, 150))
+        with patch(
+            "forensics_app.tools.convolution.ask_convolution_options",
+            return_value=(5, "vertical"),
+        ) as ask_options:
+            result = ConvolutionTool().run(None, document)
+
+        ask_options.assert_called_once_with(None)
+        self.assertEqual(result.image.mode, "RGB")
+        self.assertEqual(result.details["Kernel size"], "5")
+        self.assertEqual(result.details["Direction"], "Vertical")
+
+    def test_convolution_tool_returns_none_when_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("L", (2, 2))
+        with patch(
+            "forensics_app.tools.convolution.ask_convolution_options",
+            return_value=None,
+        ):
+            result = ConvolutionTool().run(None, document)
+
+        self.assertIsNone(result)
 
     def test_gaussian_filter_rejects_nonpositive_sigma(self) -> None:
         with self.assertRaises(ValueError):
@@ -328,6 +619,46 @@ class ToolTests(unittest.TestCase):
             "Mask threshold",
             (("threshold", "Threshold", 0, 255, 1, 10),),
         )
+
+    def test_sharpen_tool_uses_parameter_dialog(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (3, 3), "gray")
+
+        with patch(
+            "forensics_app.tools.sharpen.ask_parameters",
+            return_value={"radius": 18.0, "amount": 1.2},
+        ) as ask_parameters:
+            result = SharpenTool().run(None, document)
+
+        ask_parameters.assert_called_once_with(
+            None,
+            "Sharpen image",
+            (
+                ParameterField(
+                    "radius",
+                    "Gaussian blur radius (sigma)",
+                    0.1,
+                    10.0,
+                    0.1,
+                    2.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
+            ),
+        )
+        self.assertEqual(result.image.size, document.current.size)
+        self.assertEqual(result.details["Blur radius (sigma)"], 18.0)
+        self.assertEqual(result.details["Sharpening amount"], 1.2)
+
+    def test_sharpen_tool_returns_none_when_parameter_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with patch("forensics_app.tools.sharpen.ask_parameters", return_value=None):
+            result = SharpenTool().run(None, document)
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":

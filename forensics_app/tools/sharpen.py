@@ -10,9 +10,10 @@ from PIL import Image
 from skimage.filters import gaussian
 
 from forensics_app.core import ImageDocument
-from forensics_app.utils import ask_parameters
+from forensics_app.utils.parameter_dialog import ParameterField, ask_parameters
 
 from .base import ForensicsTool, ToolResult
+
 
 def sharpen_image(
     image: Image.Image, radius: float = 2.0, amount: float = 1.5
@@ -35,34 +36,44 @@ def sharpen_image(
     sharpened = np.clip(original + amount * detail, 0.0, 1.0)
     return Image.fromarray(np.round(sharpened * 255).astype(np.uint8))
 
+
 class SharpenTool(ForensicsTool):
     tool_id = "sharpen"
     title = "Sharpen image"
-    category = "Sharpening"
+    category = "Filtering & Edges"
     description = "Sharpen the image with adjustable blur radius and amount."
 
-def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:
-    assert document.current is not None
-    parameters = ask_parameters(
-        parent,
-        self.title,
-        (
-            ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
-            ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
-        ),
-    )
-    if parameters is None:
-        return None
+    def run(self, parent: tk.Misc, document: ImageDocument) -> ToolResult | None:
+        assert document.current is not None
+        parameters = ask_parameters(
+            parent,
+            self.title,
+            (
+                ParameterField(
+                    "radius",
+                    "Gaussian blur radius (sigma)",
+                    0.1,
+                    10.0,
+                    0.1,
+                    2.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
+            ),
+        )
+        if parameters is None:
+            return None
 
-    radius = parameters["radius"]
-    amount = parameters["amount"]
-    output = sharpen_image(document.current, radius, amount)
-    return ToolResult(
-        image=output,
-        message=f"Sharpened the image (radius={radius:g}, amount={amount:g}).",
-        details={
-            "Operation": "Unsharp mask",
-            "Blur radius (sigma)": radius,
-            "Sharpening amount": amount,
-        },
-    )
+        radius = parameters["radius"]
+        amount = parameters["amount"]
+        output = sharpen_image(document.current, radius, amount)
+        return ToolResult(
+            image=output,
+            message=f"Sharpened the image (radius={radius:g}, amount={amount:g}).",
+            details={
+                "Operation": "Unsharp mask",
+                "Blur radius (sigma)": radius,
+                "Sharpening amount": amount,
+            },
+        )
