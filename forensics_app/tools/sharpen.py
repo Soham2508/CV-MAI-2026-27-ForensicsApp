@@ -10,9 +10,10 @@ from PIL import Image
 from skimage.filters import gaussian
 
 from forensics_app.core import ImageDocument
-from forensics_app.utils import ask_parameters
+from forensics_app.utils.parameter_dialog import ask_parameters
 
 from .base import ForensicsTool, ToolResult
+
 
 def sharpen_image(
     image: Image.Image, radius: float = 2.0, amount: float = 1.5
@@ -34,6 +35,7 @@ def sharpen_image(
     detail = original - blurred
     sharpened = np.clip(original + amount * detail, 0.0, 1.0)
     return Image.fromarray(np.round(sharpened * 255).astype(np.uint8))
+
 
 class SharpenTool(ForensicsTool):
     tool_id = "sharpen"

@@ -27,6 +27,7 @@ from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
 from forensics_app.tools.registry import ToolRegistry
 from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
+from forensics_app.tools.sharpen import SharpenTool
 
 
 class ToolTests(unittest.TestCase):
@@ -402,6 +403,37 @@ class ToolTests(unittest.TestCase):
             "Mask threshold",
             (("threshold", "Threshold", 0, 255, 1, 10),),
         )
+
+    def test_sharpen_tool_uses_parameter_dialog(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (3, 3), "gray")
+
+        with patch(
+            "forensics_app.tools.sharpen.ask_parameters",
+            return_value={"radius": 2.5, "amount": 1.2},
+        ) as ask_parameters:
+            result = SharpenTool().run(None, document)
+
+        ask_parameters.assert_called_once_with(
+            None,
+            "Sharpen image",
+            (
+                ("radius", "Gaussian blur radius (sigma)", 0.1, 10.0, 0.1, 2.0),
+                ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
+            ),
+        )
+        self.assertEqual(result.image.size, document.current.size)
+        self.assertEqual(result.details["Blur radius (sigma)"], 2.5)
+        self.assertEqual(result.details["Sharpening amount"], 1.2)
+
+    def test_sharpen_tool_returns_none_when_parameter_dialog_is_cancelled(self) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (1, 1))
+
+        with patch("forensics_app.tools.sharpen.ask_parameters", return_value=None):
+            result = SharpenTool().run(None, document)
+
+        self.assertIsNone(result)
 
 
 if __name__ == "__main__":
