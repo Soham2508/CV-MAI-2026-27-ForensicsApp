@@ -278,9 +278,12 @@ class ToolTests(unittest.TestCase):
         image = Image.new("L", (4, 4))
 
         for angle in (-181, 181, float("nan")):
-            with self.subTest(angle=angle), self.assertRaisesRegex(
-                ValueError,
-                "Rotation angle",
+            with (
+                self.subTest(angle=angle),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "Rotation angle",
+                ),
             ):
                 normalized_cross_correlation(image, image, angle)
 
@@ -292,16 +295,20 @@ class ToolTests(unittest.TestCase):
             document = ImageDocument()
             document.current = Image.fromarray(pixels)
 
-            with patch(
-                "forensics_app.tools.ncc_image.filedialog.askopenfilename",
-                return_value=str(template_path),
-            ) as askopenfilename, patch(
-                "forensics_app.tools.ncc_image.ask_parameters",
-                return_value={"angle": 45.0},
-            ) as ask_parameters, patch(
-                "forensics_app.tools.ncc_image.rotate",
-                wraps=skimage_rotate,
-            ) as rotate_template:
+            with (
+                patch(
+                    "forensics_app.tools.ncc_image.filedialog.askopenfilename",
+                    return_value=str(template_path),
+                ) as askopenfilename,
+                patch(
+                    "forensics_app.tools.ncc_image.ask_parameters",
+                    return_value={"angle": 45.0},
+                ) as ask_parameters,
+                patch(
+                    "forensics_app.tools.ncc_image.rotate",
+                    wraps=skimage_rotate,
+                ) as rotate_template,
+            ):
                 result = NormalizedCrossCorrelationTool().run(None, document)
 
         askopenfilename.assert_called_once()
@@ -530,9 +537,7 @@ class ToolTests(unittest.TestCase):
             split_channels(Image.new("RGB", (1, 1)), "Alpha")
 
     def test_channel_split_tool_exposes_histogram_style_menu_options(self) -> None:
-        self.assertEqual(
-            ChannelSplitTool.menu_options, ("R", "G", "B", "All three")
-        )
+        self.assertEqual(ChannelSplitTool.menu_options, ("R", "G", "B", "All three"))
 
     def test_channel_split_tool_uses_selected_channel_action(self) -> None:
         document = ImageDocument()

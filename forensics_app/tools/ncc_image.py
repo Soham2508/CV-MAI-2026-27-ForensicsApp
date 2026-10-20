@@ -37,7 +37,7 @@ def normalized_cross_correlation(
         angle=angle,
         preserve_range=True,
     )
-    
+
     if (
         template_array.shape[0] > image_array.shape[0]
         or template_array.shape[1] > image_array.shape[1]
