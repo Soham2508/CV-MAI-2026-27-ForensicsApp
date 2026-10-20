@@ -13,7 +13,7 @@ from .masking import MaskingTool
 from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
-
+from .hog_extraction_visualization import HOGVisualizationTool
 
 def build_tool_registry() -> ToolRegistry:
     return ToolRegistry(
@@ -30,6 +30,7 @@ def build_tool_registry() -> ToolRegistry:
             ConvolutionTool(),
             CannyTool(),
             EdgeOverlayTool(),
+            HOGVisualizationTool(),
             HistogramTool(),
             SharpenTool(),
         ]
