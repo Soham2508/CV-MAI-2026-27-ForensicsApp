@@ -61,7 +61,7 @@ class SharpenTool(ForensicsTool):
                     show_slider=False,
                     no_threshold=True,
                 ),
-                ("amount", "Sharpening amount", 0.0, 3.0, 0.1, 1.5),
+                ("amount", "Sharpening amount", 0.0, 30.0, 0.1, 1.5),
             ),
         )
         if parameters is None:
