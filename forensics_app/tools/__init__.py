@@ -9,14 +9,14 @@ from .edge_overlay import EdgeOverlayTool
 from .grayscale import GrayscaleTool
 from .histogram import HistogramTool
 from .hog_extraction_visualization import HOGVisualizationTool
+from .hog_person_detection import IMAGE_TYPES, HOGPersonDetectionTool, detect_with_hog
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
 from .ncc_image import NormalizedCrossCorrelationTool
 from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
-from .hog_extraction_visualization import HOGVisualizationTool
-from .hog_person_detection import HOGPersonDetectionTool, detect_with_hog, IMAGE_TYPES
+
 
 def build_tool_registry() -> ToolRegistry:
     return ToolRegistry(
