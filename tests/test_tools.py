@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 from PIL import Image
+from skimage.transform import rotate as skimage_rotate
 
 from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
@@ -273,6 +274,16 @@ class ToolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not be larger"):
             normalized_cross_correlation(original, template)
 
+    def test_normalized_cross_correlation_rejects_invalid_rotation_angle(self) -> None:
+        image = Image.new("L", (4, 4))
+
+        for angle in (-181, 181, float("nan")):
+            with self.subTest(angle=angle), self.assertRaisesRegex(
+                ValueError,
+                "Rotation angle",
+            ):
+                normalized_cross_correlation(image, image, angle)
+
     def test_normalized_cross_correlation_tool_selects_template_image(self) -> None:
         with TemporaryDirectory() as directory:
             template_path = Path(directory) / "template.png"
@@ -284,7 +295,13 @@ class ToolTests(unittest.TestCase):
             with patch(
                 "forensics_app.tools.ncc_image.filedialog.askopenfilename",
                 return_value=str(template_path),
-            ) as askopenfilename:
+            ) as askopenfilename, patch(
+                "forensics_app.tools.ncc_image.ask_parameters",
+                return_value={"angle": 45.0},
+            ) as ask_parameters, patch(
+                "forensics_app.tools.ncc_image.rotate",
+                wraps=skimage_rotate,
+            ) as rotate_template:
                 result = NormalizedCrossCorrelationTool().run(None, document)
 
         askopenfilename.assert_called_once()
@@ -292,8 +309,38 @@ class ToolTests(unittest.TestCase):
             askopenfilename.call_args.kwargs["title"],
             "Select template image",
         )
+        ask_parameters.assert_called_once_with(
+            None,
+            "Template rotation",
+            (("angle", "Rotation angle (degrees)", -180, 180, 1, 0),),
+        )
+        self.assertEqual(rotate_template.call_args.kwargs["angle"], 45.0)
         self.assertEqual(result.image.size, document.current.size)
         self.assertEqual(result.details["Template size"], "3 × 3")
+        self.assertEqual(result.details["Rotation angle"], "45°")
+
+    def test_normalized_cross_correlation_tool_returns_none_when_rotation_is_cancelled(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            template_path = Path(directory) / "template.png"
+            Image.new("L", (2, 2), 20).save(template_path)
+            document = ImageDocument()
+            document.current = Image.new("L", (4, 4), 20)
+
+            with (
+                patch(
+                    "forensics_app.tools.ncc_image.filedialog.askopenfilename",
+                    return_value=str(template_path),
+                ),
+                patch(
+                    "forensics_app.tools.ncc_image.ask_parameters",
+                    return_value=None,
+                ),
+            ):
+                result = NormalizedCrossCorrelationTool().run(None, document)
+
+        self.assertIsNone(result)
 
     def test_normalized_cross_correlation_tool_returns_none_when_template_is_cancelled(
         self,
