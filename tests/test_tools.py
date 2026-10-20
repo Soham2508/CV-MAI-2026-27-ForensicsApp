@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 from PIL import Image
+from skimage.transform import rotate as skimage_rotate
 
 from forensics_app.core import ImageDocument
 from forensics_app.tools import build_tool_registry
@@ -28,6 +29,10 @@ from forensics_app.tools.edge_overlay import EdgeOverlayTool, overlay_edges
 from forensics_app.tools.grayscale import GrayscaleTool
 from forensics_app.tools.histogram import HISTOGRAM_OPTIONS, HistogramTool
 from forensics_app.tools.masking import MaskingTool
+from forensics_app.tools.ncc_image import (
+    NormalizedCrossCorrelationTool,
+    normalized_cross_correlation,
+)
 from forensics_app.tools.registry import ToolRegistry
 from forensics_app.tools.sharpen import SharpenTool, sharpen_image
 from forensics_app.tools.ski_filters import SkiFiltersTool, apply_ski_filter
@@ -249,6 +254,126 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(len(histograms), 1)
         self.assertEqual(histograms[0].menu_options, HISTOGRAM_OPTIONS)
 
+    def test_normalized_cross_correlation_returns_same_size_grayscale_image(
+        self,
+    ) -> None:
+        pixels = np.arange(12 * 12, dtype=np.uint8).reshape((12, 12))
+        original = Image.fromarray(pixels)
+        template = Image.fromarray(pixels[4:8, 5:9])
+
+        output = normalized_cross_correlation(original, template)
+
+        self.assertEqual(output.size, original.size)
+        self.assertEqual(output.mode, "L")
+        self.assertEqual(np.asarray(output).max(), 255)
+
+    def test_normalized_cross_correlation_rejects_larger_template(self) -> None:
+        original = Image.new("L", (2, 2))
+        template = Image.new("L", (3, 2))
+
+        with self.assertRaisesRegex(ValueError, "must not be larger"):
+            normalized_cross_correlation(original, template)
+
+    def test_normalized_cross_correlation_rejects_invalid_rotation_angle(self) -> None:
+        image = Image.new("L", (4, 4))
+
+        for angle in (-181, 181, float("nan")):
+            with (
+                self.subTest(angle=angle),
+                self.assertRaisesRegex(
+                    ValueError,
+                    "Rotation angle",
+                ),
+            ):
+                normalized_cross_correlation(image, image, angle)
+
+    def test_normalized_cross_correlation_tool_selects_template_image(self) -> None:
+        with TemporaryDirectory() as directory:
+            template_path = Path(directory) / "template.png"
+            pixels = np.arange(64, dtype=np.uint8).reshape((8, 8))
+            Image.fromarray(pixels[2:5, 3:6]).save(template_path)
+            document = ImageDocument()
+            document.current = Image.fromarray(pixels)
+
+            with (
+                patch(
+                    "forensics_app.tools.ncc_image.filedialog.askopenfilename",
+                    return_value=str(template_path),
+                ) as askopenfilename,
+                patch(
+                    "forensics_app.tools.ncc_image.ask_parameters",
+                    return_value={"angle": 45.0},
+                ) as ask_parameters,
+                patch(
+                    "forensics_app.tools.ncc_image.rotate",
+                    wraps=skimage_rotate,
+                ) as rotate_template,
+            ):
+                result = NormalizedCrossCorrelationTool().run(None, document)
+
+        askopenfilename.assert_called_once()
+        self.assertEqual(
+            askopenfilename.call_args.kwargs["title"],
+            "Select template image",
+        )
+        ask_parameters.assert_called_once_with(
+            None,
+            "Template rotation",
+            (("angle", "Rotation angle (degrees)", -180, 180, 1, 0),),
+        )
+        self.assertEqual(rotate_template.call_args.kwargs["angle"], 45.0)
+        self.assertEqual(result.image.size, document.current.size)
+        self.assertEqual(result.details["Template size"], "3 × 3")
+        self.assertEqual(result.details["Rotation angle"], "45°")
+
+    def test_normalized_cross_correlation_tool_returns_none_when_rotation_is_cancelled(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            template_path = Path(directory) / "template.png"
+            Image.new("L", (2, 2), 20).save(template_path)
+            document = ImageDocument()
+            document.current = Image.new("L", (4, 4), 20)
+
+            with (
+                patch(
+                    "forensics_app.tools.ncc_image.filedialog.askopenfilename",
+                    return_value=str(template_path),
+                ),
+                patch(
+                    "forensics_app.tools.ncc_image.ask_parameters",
+                    return_value=None,
+                ),
+            ):
+                result = NormalizedCrossCorrelationTool().run(None, document)
+
+        self.assertIsNone(result)
+
+    def test_normalized_cross_correlation_tool_returns_none_when_template_is_cancelled(
+        self,
+    ) -> None:
+        document = ImageDocument()
+        document.current = Image.new("RGB", (4, 4))
+
+        with patch(
+            "forensics_app.tools.ncc_image.filedialog.askopenfilename",
+            return_value="",
+        ):
+            result = NormalizedCrossCorrelationTool().run(None, document)
+
+        self.assertIsNone(result)
+
+    def test_normalized_cross_correlation_tool_is_registered_in_template_matching(
+        self,
+    ) -> None:
+        tools = build_tool_registry().all()
+        matching_tools = [
+            tool for tool in tools if isinstance(tool, NormalizedCrossCorrelationTool)
+        ]
+
+        self.assertEqual(len(matching_tools), 1)
+        self.assertEqual(matching_tools[0].category, "Template Matching")
+
     def test_histogram_actions_plot_selected_channels(self) -> None:
         document = ImageDocument()
         document.current = Image.new("RGB", (2, 1))
@@ -412,9 +537,7 @@ class ToolTests(unittest.TestCase):
             split_channels(Image.new("RGB", (1, 1)), "Alpha")
 
     def test_channel_split_tool_exposes_histogram_style_menu_options(self) -> None:
-        self.assertEqual(
-            ChannelSplitTool.menu_options, ("R", "G", "B", "All three")
-        )
+        self.assertEqual(ChannelSplitTool.menu_options, ("R", "G", "B", "All three"))
 
     def test_channel_split_tool_uses_selected_channel_action(self) -> None:
         document = ImageDocument()

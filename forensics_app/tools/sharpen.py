@@ -22,7 +22,9 @@ def sharpen_image(
     if not math.isfinite(radius) or radius <= 0:
         raise ValueError("Radius must be a finite number greater than zero.")
     if not math.isfinite(amount) or amount < 0:
-        raise ValueError("Amount must be a finite number greater than or equal to zero.")
+        raise ValueError(
+            "Amount must be a finite number greater than or equal to zero."
+        )
 
     grayscale = image.mode in ("1", "L", "I", "F")
     if grayscale:

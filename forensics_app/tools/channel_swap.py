@@ -12,7 +12,6 @@ from forensics_app.core import ImageDocument
 
 from .base import ForensicsTool, ToolResult
 
-
 CHANNELS = ("Red", "Green", "Blue")
 CHANNEL_INDICES = {name: index for index, name in enumerate(CHANNELS)}
 

@@ -10,6 +10,7 @@ from .grayscale import GrayscaleTool
 from .histogram import HistogramTool
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
+from .ncc_image import NormalizedCrossCorrelationTool
 from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
@@ -22,6 +23,7 @@ def build_tool_registry() -> ToolRegistry:
             ChannelSplitTool(),
             GrayscaleTool(),
             MaskingTool(),
+            NormalizedCrossCorrelationTool(),
             ContrastStretchTool(),
             HistogramEqualizationTool(),
             CLAHETool(),
