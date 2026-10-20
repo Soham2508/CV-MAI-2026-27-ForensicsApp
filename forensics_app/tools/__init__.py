@@ -15,6 +15,7 @@ from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
 from .hog_extraction_visualization import HOGVisualizationTool
+from .hog_person_detection import HOGPersonDetectionTool, detect_with_hog, IMAGE_TYPES
 
 def build_tool_registry() -> ToolRegistry:
     return ToolRegistry(
@@ -35,6 +36,7 @@ def build_tool_registry() -> ToolRegistry:
             HOGVisualizationTool(),
             HistogramTool(),
             SharpenTool(),
+            HOGPersonDetectionTool(),
         ]
     )
 
