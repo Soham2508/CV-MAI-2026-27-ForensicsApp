@@ -9,6 +9,7 @@ from .edge_overlay import EdgeOverlayTool
 from .grayscale import GrayscaleTool
 from .histogram import HistogramTool
 from .hog_extraction_visualization import HOGVisualizationTool
+from .hog_person_detection import IMAGE_TYPES, HOGPersonDetectionTool, detect_with_hog
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
 from .ncc_image import NormalizedCrossCorrelationTool
@@ -36,6 +37,7 @@ def build_tool_registry() -> ToolRegistry:
             HOGVisualizationTool(),
             HistogramTool(),
             SharpenTool(),
+            HOGPersonDetectionTool(),
         ]
     )
 
