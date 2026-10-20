@@ -8,6 +8,7 @@ from .convolution import ConvolutionTool
 from .edge_overlay import EdgeOverlayTool
 from .grayscale import GrayscaleTool
 from .histogram import HistogramTool
+from .hog_extraction_visualization import HOGVisualizationTool
 from .image_info import ImageInfoTool
 from .masking import MaskingTool
 from .ncc_image import NormalizedCrossCorrelationTool
