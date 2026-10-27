@@ -82,6 +82,8 @@ def detect_corners(
                 width=1,
             )
 
+    return corners, output
+
 
 class CornerDetectionTool(ForensicsTool):
     tool_id = "corner_detection"
@@ -111,9 +113,7 @@ class CornerDetectionTool(ForensicsTool):
                 ),
             )
         else:
-            fields += (
-                ParameterField("harris_sigma", "Harris sigma", 0.1, 5, 0.1, 1),
-            )
+            fields += (ParameterField("harris_sigma", "Harris sigma", 0.1, 5, 0.1, 1),)
 
         parameters = ask_parameters(
             parent,
