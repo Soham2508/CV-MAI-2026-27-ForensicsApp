@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
@@ -100,6 +101,7 @@ class MainWindow:
         sidebar = ttk.Frame(body, style="Sidebar.TFrame", padding=12, width=235)
         sidebar.pack_propagate(False)
         body.add(sidebar, weight=0)
+        self.sidebar = sidebar
         ttk.Label(
             sidebar, text="Forensics tools", style="Title.TLabel", background="#eef1f5"
         ).pack(anchor="w", pady=(0, 12))
@@ -140,6 +142,8 @@ class MainWindow:
         self.root.bind_all("<MouseWheel>", self._on_sidebar_mousewheel)
         self.root.bind_all("<Button-4>", self._on_sidebar_mousewheel)
         self.root.bind_all("<Button-5>", self._on_sidebar_mousewheel)
+        if sys.platform == "darwin":
+            self.root.bind_all("<Option-MouseWheel>", self._on_sidebar_mousewheel)
 
         for category, tools in self.registry.categories():
             ttk.Label(tool_list, text=category, style="Category.TLabel").pack(
@@ -203,25 +207,86 @@ class MainWindow:
             relief="sunken",
         ).pack(fill="x")
 
+    def _is_pointer_over_sidebar(self, event: tk.Event) -> bool:
+        """Return True if pointer or event target is inside the sidebar."""
+        widget = getattr(event, "widget", None)
+        if (
+            isinstance(widget, str)
+            and hasattr(self, "root")
+            and hasattr(self.root, "nametowidget")
+        ):
+            try:
+                widget = self.root.nametowidget(widget)
+            except Exception:
+                widget = None
+
+        targets = tuple(
+            w
+            for w in (
+                getattr(self, "sidebar_canvas", None),
+                getattr(self, "sidebar", None),
+            )
+            if w is not None
+        )
+
+        current = widget
+        while current is not None:
+            if current in targets:
+                return True
+            current = getattr(current, "master", None)
+
+        canvas = getattr(self, "sidebar_canvas", None)
+        if canvas is not None and hasattr(canvas, "winfo_rootx"):
+            x = getattr(event, "x_root", None)
+            y = getattr(event, "y_root", None)
+
+            # On macOS Aqua, root coordinates may be 0/None in MouseWheel events.
+            if (x is None or y is None or (x == 0 and y == 0)) and hasattr(
+                canvas, "winfo_pointerx"
+            ):
+                try:
+                    x = canvas.winfo_pointerx()
+                    y = canvas.winfo_pointery()
+                except Exception:
+                    pass
+
+            if x is not None and y is not None:
+                try:
+                    left = canvas.winfo_rootx()
+                    top = canvas.winfo_rooty()
+                    width = canvas.winfo_width()
+                    height = canvas.winfo_height()
+                    if left <= x < left + width and top <= y < top + height:
+                        return True
+                except Exception:
+                    pass
+
+        return False
+
     def _on_sidebar_mousewheel(self, event: tk.Event) -> str | None:
         """Scroll the tool list only when the pointer is over its viewport."""
-        canvas = self.sidebar_canvas
-        left = canvas.winfo_rootx()
-        top = canvas.winfo_rooty()
-        if not (
-            left <= event.x_root < left + canvas.winfo_width()
-            and top <= event.y_root < top + canvas.winfo_height()
-        ):
+        if not self._is_pointer_over_sidebar(event):
             return None
 
-        if event.num == 4:
+        canvas = self.sidebar_canvas
+        num = getattr(event, "num", None)
+        delta = getattr(event, "delta", 0)
+
+        if num == 4:
             units = -1
-        elif event.num == 5:
+        elif num == 5:
             units = 1
+        elif sys.platform == "darwin":
+            # On macOS (Aqua), event.delta is fine-grained and not a multiple of 120.
+            # Negative delta scrolls down, which requires positive units.
+            units = -int(delta)
+            if units == 0 and delta:
+                units = -1 if delta > 0 else 1
         else:
-            units = -int(event.delta / 120)
-            if units == 0 and event.delta:
-                units = -1 if event.delta > 0 else 1
+            units = -int(delta / 120)
+            if units == 0 and delta:
+                units = -1 if delta > 0 else 1
+
         if units:
             canvas.yview_scroll(units, "units")
         return "break"
