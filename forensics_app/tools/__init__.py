@@ -16,6 +16,7 @@ from .ncc_image import NormalizedCrossCorrelationTool
 from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
+from .corner_detection import CornerDetectionTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -38,6 +39,7 @@ def build_tool_registry() -> ToolRegistry:
             HistogramTool(),
             SharpenTool(),
             HOGPersonDetectionTool(),
+            CornerDetectionTool(),
         ]
     )
 
