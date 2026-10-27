@@ -63,8 +63,24 @@ def detect_corners(
     drawing = ImageDraw.Draw(output)
     for row, column in corners:
         x, y = int(column), int(row)
-        drawing.ellipse((x - 3, y - 3, x + 3, y + 3), outline="red", width=1)
-    return corners, output
+
+        if method == "FAST":
+            drawing.ellipse(
+                (x - 3, y - 3, x + 3, y + 3),
+                outline="red",
+                width=1,
+            )
+        else:
+            drawing.line(
+                (x - 4, y, x + 4, y),
+                fill="#0080ff",
+                width=1,
+            )
+            drawing.line(
+                (x, y - 4, x, y + 4),
+                fill="#0080ff",
+                width=1,
+            )
 
 
 class CornerDetectionTool(ForensicsTool):
