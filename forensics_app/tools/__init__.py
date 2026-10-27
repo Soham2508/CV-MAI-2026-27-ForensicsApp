@@ -17,6 +17,7 @@ from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
 from .corner_detection import CornerDetectionTool
+from .descriptor_extraction import DescriptorExtractionTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -40,6 +41,7 @@ def build_tool_registry() -> ToolRegistry:
             SharpenTool(),
             HOGPersonDetectionTool(),
             CornerDetectionTool(),
+            DescriptorExtractionTool(),
         ]
     )
 
