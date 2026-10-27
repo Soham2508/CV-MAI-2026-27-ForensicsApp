@@ -165,6 +165,9 @@ def plot_matches(
 ) -> Image.Image:
     """Plot matched features across two images on a clean plane in full colour.
 
+    Equalizes the visual display height of both images to prevent tiny crops
+    and eliminate black padding voids.
+
     Parameters
     ----------
     image1 : PIL.Image.Image
@@ -187,30 +190,76 @@ def plot_matches(
     PIL.Image.Image
         Rendered visualization of side-by-side images with keypoint matches in full colour.
     """
+    # Normalize images to a matching display height to prevent tiny crops and black voids
+    target_height = min(1200, max(image1.height, image2.height))
+    target_height = max(200, target_height)
+
+    s1 = target_height / image1.height
+    s2 = target_height / image2.height
+
+    w1 = max(1, round(image1.width * s1))
+    w2 = max(1, round(image2.width * s2))
+
+    img1_resized = image1.convert("RGB").resize(
+        (w1, target_height), Image.Resampling.LANCZOS
+    )
+    img2_resized = image2.convert("RGB").resize(
+        (w2, target_height), Image.Resampling.LANCZOS
+    )
+
+    if len(keypoints1) > 0:
+        kp1_scaled = keypoints1 * s1
+    else:
+        kp1_scaled = np.empty((0, 2), dtype=float)
+
+    if len(keypoints2) > 0:
+        kp2_scaled = keypoints2 * s2
+    else:
+        kp2_scaled = np.empty((0, 2), dtype=float)
+
+    combined = np.hstack([np.asarray(img1_resized), np.asarray(img2_resized)])
+    total_width = w1 + w2
+
     owns_figure = ax is None
     if owns_figure:
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig_width = max(8.0, total_width / 100.0)
+        fig_height = max(4.0, target_height / 100.0)
+        fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=100)
     else:
         fig = ax.figure
 
-    # Use full color RGB representations
-    img1_rgb = np.asarray(image1.convert("RGB"))
-    img2_rgb = np.asarray(image2.convert("RGB"))
-
-    plot_matched_features(
-        img1_rgb,
-        img2_rgb,
-        keypoints0=keypoints1,
-        keypoints1=keypoints2,
-        matches=matches,
-        ax=ax,
-        keypoints_color="k",
-        matches_color=None,
-    )
-
-    # Clean plane presentation (no axes ticks or frame borders)
+    ax.imshow(combined)
+    ax.axis((0, total_width, target_height, 0))
     ax.axis("off")
     fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+
+    # Keypoints scatter
+    if len(kp1_scaled) > 0:
+        ax.scatter(
+            kp1_scaled[:, 1],
+            kp1_scaled[:, 0],
+            facecolors="none",
+            edgecolors="k",
+            s=25,
+            linewidths=1.2,
+        )
+    if len(kp2_scaled) > 0:
+        ax.scatter(
+            kp2_scaled[:, 1] + w1,
+            kp2_scaled[:, 0],
+            facecolors="none",
+            edgecolors="k",
+            s=25,
+            linewidths=1.2,
+        )
+
+    # Match lines
+    rng = np.random.default_rng(seed=0)
+    colors = [rng.random(3) for _ in range(len(matches))]
+    for i, (idx0, idx1) in enumerate(matches):
+        x0, y0 = kp1_scaled[idx0, 1], kp1_scaled[idx0, 0]
+        x1, y1 = kp2_scaled[idx1, 1] + w1, kp2_scaled[idx1, 0]
+        ax.plot([x0, x1], [y0, y1], "-", color=colors[i], linewidth=1.5)
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
