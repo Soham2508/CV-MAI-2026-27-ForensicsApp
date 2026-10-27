@@ -14,6 +14,7 @@ from forensics_app.tools.hog_person_detection import (
     detect_with_hog,
     draw_detection_boxes,
 )
+from forensics_app.utils.parameter_dialog import ParameterField
 
 
 class HOGPersonDetectionTests(unittest.TestCase):
@@ -103,7 +104,7 @@ class HOGPersonDetectionTests(unittest.TestCase):
                     "cells_per_block": 2,
                     "step_size": 1,
                 },
-            ),
+            ) as ask_params,
             patch(
                 "forensics_app.tools.hog_person_detection.ask_box_colors",
                 return_value=("Green", "Yellow"),
@@ -122,6 +123,52 @@ class HOGPersonDetectionTests(unittest.TestCase):
             )
             result = HOGPersonDetectionTool().run(None, document)
 
+        ask_params.assert_called_once_with(
+            None,
+            "Person detection with HOG",
+            (
+                ParameterField(
+                    "orientations",
+                    "Orientations",
+                    1.0,
+                    18.0,
+                    1.0,
+                    9.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "pixels_per_cell",
+                    "Pixels per cell",
+                    1.0,
+                    32.0,
+                    1.0,
+                    8.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "cells_per_block",
+                    "Cells per block",
+                    1.0,
+                    4.0,
+                    1.0,
+                    2.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "step_size",
+                    "Sliding-window step (pixels)",
+                    1.0,
+                    64.0,
+                    1.0,
+                    8.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+            ),
+        )
         ask_box_colors.assert_called_once_with(None)
         draw_boxes.assert_called_once_with(
             document.current, detection, "Green", "Yellow"

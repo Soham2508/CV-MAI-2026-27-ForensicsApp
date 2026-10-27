@@ -155,19 +155,58 @@ class DescriptorExtractionTool(ForensicsTool):
         if action in ("ORB", "Both"):
             fields += (
                 ParameterField(
-                    "orb_n_keypoints", "ORB: maximum keypoints", 1, 5000, 1, 200
+                    "orb_n_keypoints",
+                    "ORB: maximum keypoints",
+                    1.0,
+                    5000.0,
+                    1.0,
+                    200.0,
+                    show_slider=False,
+                    no_threshold=True,
                 ),
                 ParameterField(
-                    "orb_fast_threshold", "ORB: FAST threshold", 0, 1, 0.01, 0.08
+                    "orb_fast_threshold",
+                    "ORB: FAST threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.08,
                 ),
             )
             integer_fields += ("orb_n_keypoints",)
 
         if action in ("SIFT", "Both"):
             fields += (
-                ParameterField("sift_n_octaves", "SIFT: maximum octaves", 1, 8, 1, 8),
-                ParameterField("sift_n_scales", "SIFT: scales per octave", 1, 8, 1, 3),
-                ParameterField("sift_sigma_min", "SIFT: initial sigma", 1, 3, 0.1, 1.6),
+                ParameterField(
+                    "sift_n_octaves",
+                    "SIFT: maximum octaves",
+                    1.0,
+                    8.0,
+                    1.0,
+                    8.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "sift_n_scales",
+                    "SIFT: scales per octave",
+                    1.0,
+                    8.0,
+                    1.0,
+                    3.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "sift_sigma_min",
+                    "SIFT: initial sigma",
+                    1.0,
+                    3.0,
+                    0.1,
+                    1.6,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
             )
             integer_fields += ("sift_n_octaves", "sift_n_scales")
 

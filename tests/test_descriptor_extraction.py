@@ -10,6 +10,7 @@ from forensics_app.tools.descriptor_extraction import (
     extract_descriptors,
     extract_features,
 )
+from forensics_app.utils.parameter_dialog import ParameterField
 
 
 class DescriptorExtractionTests(unittest.TestCase):
@@ -145,10 +146,34 @@ class DescriptorExtractionTests(unittest.TestCase):
         with patch(
             "forensics_app.tools.descriptor_extraction.ask_parameters",
             return_value=fake_params,
-        ):
+        ) as mock_ask:
             result = tool.run_action(MagicMock(), document, "ORB")
 
         self.assertIsNotNone(result)
+        mock_ask.assert_called_once()
+        self.assertEqual(
+            mock_ask.call_args[0][2],
+            (
+                ParameterField(
+                    "orb_n_keypoints",
+                    "ORB: maximum keypoints",
+                    1.0,
+                    5000.0,
+                    1.0,
+                    200.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "orb_fast_threshold",
+                    "ORB: FAST threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.08,
+                ),
+            ),
+        )
         assert result is not None
         self.assertIn("ORB:", result.message)
         self.assertEqual(result.details["Mode"], "ORB")
@@ -169,10 +194,46 @@ class DescriptorExtractionTests(unittest.TestCase):
         with patch(
             "forensics_app.tools.descriptor_extraction.ask_parameters",
             return_value=fake_params,
-        ):
+        ) as mock_ask:
             result = tool.run_action(MagicMock(), document, "SIFT")
 
         self.assertIsNotNone(result)
+        mock_ask.assert_called_once()
+        self.assertEqual(
+            mock_ask.call_args[0][2],
+            (
+                ParameterField(
+                    "sift_n_octaves",
+                    "SIFT: maximum octaves",
+                    1.0,
+                    8.0,
+                    1.0,
+                    8.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "sift_n_scales",
+                    "SIFT: scales per octave",
+                    1.0,
+                    8.0,
+                    1.0,
+                    3.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "sift_sigma_min",
+                    "SIFT: initial sigma",
+                    1.0,
+                    3.0,
+                    0.1,
+                    1.6,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+            ),
+        )
         assert result is not None
         self.assertIn("SIFT:", result.message)
         self.assertEqual(result.details["Mode"], "SIFT")

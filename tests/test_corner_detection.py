@@ -6,6 +6,7 @@ from PIL import Image
 
 from forensics_app.core import ImageDocument
 from forensics_app.tools.corner_detection import CornerDetectionTool, detect_corners
+from forensics_app.utils.parameter_dialog import ParameterField
 
 
 class CornerDetectionTests(unittest.TestCase):
@@ -111,10 +112,37 @@ class CornerDetectionTests(unittest.TestCase):
         with patch(
             "forensics_app.tools.corner_detection.ask_parameters",
             return_value=fake_params,
-        ):
+        ) as mock_ask:
             result = tool.run_action(MagicMock(), document, "FAST")
 
         self.assertIsNotNone(result)
+        mock_ask.assert_called_once()
+        self.assertEqual(
+            mock_ask.call_args[0][2],
+            (
+                ParameterField(
+                    "threshold_rel", "Relative peak threshold", 0.0, 1.0, 0.01, 0.1
+                ),
+                ParameterField(
+                    "min_distance",
+                    "Minimum peak distance (px)",
+                    1.0,
+                    50.0,
+                    1.0,
+                    5.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "fast_threshold",
+                    "FAST intensity threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.15,
+                ),
+            ),
+        )
         assert result is not None
         self.assertIn("FAST: detected", result.message)
         self.assertEqual(result.details["Method"], "FAST")
@@ -135,10 +163,39 @@ class CornerDetectionTests(unittest.TestCase):
         with patch(
             "forensics_app.tools.corner_detection.ask_parameters",
             return_value=fake_params,
-        ):
+        ) as mock_ask:
             result = tool.run_action(MagicMock(), document, "Harris")
 
         self.assertIsNotNone(result)
+        mock_ask.assert_called_once()
+        self.assertEqual(
+            mock_ask.call_args[0][2],
+            (
+                ParameterField(
+                    "threshold_rel", "Relative peak threshold", 0.0, 1.0, 0.01, 0.1
+                ),
+                ParameterField(
+                    "min_distance",
+                    "Minimum peak distance (px)",
+                    1.0,
+                    50.0,
+                    1.0,
+                    5.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+                ParameterField(
+                    "harris_sigma",
+                    "Harris sigma",
+                    0.1,
+                    5.0,
+                    0.1,
+                    1.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+            ),
+        )
         assert result is not None
         self.assertIn("Harris: detected", result.message)
         self.assertEqual(result.details["Method"], "Harris")

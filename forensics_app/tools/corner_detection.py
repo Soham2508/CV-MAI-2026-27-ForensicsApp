@@ -103,17 +103,44 @@ class CornerDetectionTool(ForensicsTool):
         assert document.current is not None
 
         fields = (
-            ParameterField("threshold_rel", "Relative peak threshold", 0, 1, 0.01, 0.1),
-            ParameterField("min_distance", "Minimum peak distance (px)", 1, 50, 1, 5),
+            ParameterField(
+                "threshold_rel", "Relative peak threshold", 0.0, 1.0, 0.01, 0.1
+            ),
+            ParameterField(
+                "min_distance",
+                "Minimum peak distance (px)",
+                1.0,
+                50.0,
+                1.0,
+                5.0,
+                show_slider=False,
+                no_threshold=True,
+            ),
         )
         if action == "FAST":
             fields += (
                 ParameterField(
-                    "fast_threshold", "FAST intensity threshold", 0, 1, 0.01, 0.15
+                    "fast_threshold",
+                    "FAST intensity threshold",
+                    0.0,
+                    1.0,
+                    0.01,
+                    0.15,
                 ),
             )
         else:
-            fields += (ParameterField("harris_sigma", "Harris sigma", 0.1, 5, 0.1, 1),)
+            fields += (
+                ParameterField(
+                    "harris_sigma",
+                    "Harris sigma",
+                    0.1,
+                    5.0,
+                    0.1,
+                    1.0,
+                    show_slider=False,
+                    no_threshold=True,
+                ),
+            )
 
         parameters = ask_parameters(
             parent,
