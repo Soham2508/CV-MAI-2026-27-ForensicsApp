@@ -548,6 +548,11 @@ class BestImageMatchInDirTool(ForensicsTool):
         # Connect the inlier correspondences (or all matches if no inliers)
         plot_matches_array = matches[inliers] if np.any(inliers) else matches
 
+        ref_name = Path(document.path).name if document.path else "Reference"
+        best_name = best_path.name
+        n_display_matches = len(plot_matches_array)
+        plot_title = f"Reference: {ref_name} <---> Best: {best_name}  (matches={n_display_matches})"
+
         output_image = plot_matches(
             query_image,
             cand_img,
@@ -555,6 +560,9 @@ class BestImageMatchInDirTool(ForensicsTool):
             best["candidate_keypoints"],
             plot_matches_array,
             show=show_plot,
+            title=plot_title,
+            keypoint_size=6.0,
+            keypoint_color="red",
         )
 
         metric = "Hamming" if method == "ORB" else "Euclidean"

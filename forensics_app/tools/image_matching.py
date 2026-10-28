@@ -162,6 +162,10 @@ def plot_matches(
     *,
     ax: plt.Axes | None = None,
     show: bool = False,
+    title: str | None = None,
+    keypoint_size: float = 6.0,
+    keypoint_color: str = "red",
+    match_linewidth: float = 1.0,
 ) -> Image.Image:
     """Plot matched features across two images on a clean plane in full colour.
 
@@ -231,26 +235,30 @@ def plot_matches(
     ax.imshow(combined)
     ax.axis((0, total_width, target_height, 0))
     ax.axis("off")
-    fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
+    if title:
+        ax.set_title(title, fontsize=10, pad=6)
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=0.94)
+    else:
+        fig.subplots_adjust(left=0, right=1, bottom=0, top=1)
 
-    # Keypoints scatter
+    # Keypoints scatter: small red circles to highlight descriptors cleanly without clutter
     if len(kp1_scaled) > 0:
         ax.scatter(
             kp1_scaled[:, 1],
             kp1_scaled[:, 0],
             facecolors="none",
-            edgecolors="k",
-            s=25,
-            linewidths=1.2,
+            edgecolors=keypoint_color,
+            s=keypoint_size,
+            linewidths=0.8,
         )
     if len(kp2_scaled) > 0:
         ax.scatter(
             kp2_scaled[:, 1] + w1,
             kp2_scaled[:, 0],
             facecolors="none",
-            edgecolors="k",
-            s=25,
-            linewidths=1.2,
+            edgecolors=keypoint_color,
+            s=keypoint_size,
+            linewidths=0.8,
         )
 
     # Match lines
@@ -259,10 +267,10 @@ def plot_matches(
     for i, (idx0, idx1) in enumerate(matches):
         x0, y0 = kp1_scaled[idx0, 1], kp1_scaled[idx0, 0]
         x1, y1 = kp2_scaled[idx1, 1] + w1, kp2_scaled[idx1, 0]
-        ax.plot([x0, x1], [y0, y1], "-", color=colors[i], linewidth=1.5)
+        ax.plot([x0, x1], [y0, y1], "-", color=colors[i], linewidth=match_linewidth)
 
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0)
+    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.05 if title else 0)
     buf.seek(0)
     output_image = Image.open(buf).convert("RGB")
 
@@ -608,7 +616,7 @@ class ImageMatchingTool(ForensicsTool):
             max_ratio=max_ratio,
         )
 
-        # Plot matches in full colour on a clean plane
+        # Plot matches in full colour on a clean plane with small red circles
         output_image = plot_matches(
             image1,
             image2,
@@ -616,6 +624,8 @@ class ImageMatchingTool(ForensicsTool):
             keypoints2,
             matches,
             show=show_plot,
+            keypoint_size=6.0,
+            keypoint_color="red",
         )
 
         metric = "Hamming" if method == "ORB" else "Euclidean"
