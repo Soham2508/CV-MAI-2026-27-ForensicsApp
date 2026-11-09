@@ -184,12 +184,10 @@ class FaceAnalysisTests(unittest.TestCase):
         # Multi-classifier AdaBoost learning when error > 0 across rounds
         rng2 = np.random.default_rng(42)
         multi_pos = [
-            compute_integral_image(rng2.uniform(0.3, 0.7, (16, 16)))
-            for _ in range(10)
+            compute_integral_image(rng2.uniform(0.3, 0.7, (16, 16))) for _ in range(10)
         ]
         multi_neg = [
-            compute_integral_image(rng2.uniform(0.3, 0.7, (16, 16)))
-            for _ in range(10)
+            compute_integral_image(rng2.uniform(0.3, 0.7, (16, 16))) for _ in range(10)
         ]
         for p in multi_pos:
             p[:8, :8] += 0.2

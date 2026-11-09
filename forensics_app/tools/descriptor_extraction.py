@@ -24,6 +24,10 @@ def extract_descriptors(
     n_octaves: int = 8,
     n_scales: int = 3,
     sigma_min: float = 1.6,
+    upsampling: int = 2,
+    c_dog: float | None = None,
+    c_edge: float = 10.0,
+    max_keypoints: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, Image.Image]:
 
     if method not in ("ORB", "SIFT"):
@@ -45,12 +49,16 @@ def extract_descriptors(
         # With upsampling=2 and sigma_in=0.5, sigma_min must be at least 1.
         if not math.isfinite(sigma_min) or sigma_min < 1:
             raise ValueError("SIFT sigma_min must be finite and at least 1.0.")
-        extractor = SIFT(
-            upsampling=2,
-            n_octaves=n_octaves,
-            n_scales=n_scales,
-            sigma_min=sigma_min,
-        )
+        sift_kwargs: dict[str, float | int] = {
+            "upsampling": upsampling,
+            "n_octaves": n_octaves,
+            "n_scales": n_scales,
+            "sigma_min": sigma_min,
+            "c_edge": c_edge,
+        }
+        if c_dog is not None:
+            sift_kwargs["c_dog"] = c_dog
+        extractor = SIFT(**sift_kwargs)
         descriptor_width, descriptor_dtype = 128, np.uint8
         minimum_size = 12
 
@@ -73,6 +81,13 @@ def extract_descriptors(
     else:
         keypoints = extractor.keypoints.copy()
         descriptors = extractor.descriptors.copy()
+        if (
+            max_keypoints is not None
+            and max_keypoints > 0
+            and len(keypoints) > max_keypoints
+        ):
+            keypoints = keypoints[:max_keypoints]
+            descriptors = descriptors[:max_keypoints]
 
     output = gray_image.convert("RGB")
     drawing = ImageDraw.Draw(output)
@@ -81,6 +96,7 @@ def extract_descriptors(
         drawing.ellipse((x - 3, y - 3, x + 3, y + 3), outline="red", width=1)
 
     return keypoints, descriptors, output
+
 
 def extract_features(
     image: Image.Image,
@@ -123,14 +139,13 @@ def extract_features(
         for row, column in keypoints:
             x, y = float(column), float(row)
             if method == "ORB":
-                drawing.ellipse(
-                    (x - 3, y - 3, x + 3, y + 3), outline="red", width=1
-                )
+                drawing.ellipse((x - 3, y - 3, x + 3, y + 3), outline="red", width=1)
             else:
                 drawing.line((x - 4, y, x + 4, y), fill="#0080ff", width=1)
                 drawing.line((x, y - 4, x, y + 4), fill="#0080ff", width=1)
 
     return features, output
+
 
 class DescriptorExtractionTool(ForensicsTool):
     tool_id = "descriptor_extraction"
@@ -227,9 +242,7 @@ class DescriptorExtractionTool(ForensicsTool):
             key: int(value) if key in integer_fields else value
             for key, value in parameters.items()
         }
-        features, output = extract_features(
-            document.current, mode=action, **settings
-        )
+        features, output = extract_features(document.current, mode=action, **settings)
 
         details = {"Mode": action}
         summaries = []

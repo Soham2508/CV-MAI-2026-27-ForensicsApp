@@ -230,13 +230,15 @@ def normalized_cross_correlation(
     )
 
     if threshold is None:
-        visualization = np.rint(
-            np.clip((correlation + 1) * 127.5, 0, 255)
-        ).astype(np.uint8)
+        visualization = np.rint(np.clip((correlation + 1) * 127.5, 0, 255)).astype(
+            np.uint8
+        )
         return Image.fromarray(visualization)
 
     if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
-        raise ValueError("Correlation threshold must be a finite number between -1.0 and 1.0.")
+        raise ValueError(
+            "Correlation threshold must be a finite number between -1.0 and 1.0."
+        )
 
     if show_side_by_side:
         return plot_template_matching(
@@ -268,7 +270,9 @@ def threshold_normalized_cross_correlation(
 ) -> Image.Image:
     """Return image with template matches exceeding threshold superimposed."""
     if not math.isfinite(threshold) or not -1.0 <= threshold <= 1.0:
-        raise ValueError("Correlation threshold must be a finite number between -1.0 and 1.0.")
+        raise ValueError(
+            "Correlation threshold must be a finite number between -1.0 and 1.0."
+        )
 
     return normalized_cross_correlation(
         image=image,
@@ -335,9 +339,8 @@ class NormalizedCrossCorrelationTool(ForensicsTool):
         with Image.open(template_path) as image:
             template = image.copy()
 
-        is_thresholded = (
-            "thresh" in action.lower()
-            or (parameters is not None and "threshold" in parameters)
+        is_thresholded = "thresh" in action.lower() or (
+            parameters is not None and "threshold" in parameters
         )
 
         if parameters is None:

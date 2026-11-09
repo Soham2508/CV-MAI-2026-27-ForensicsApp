@@ -1,0 +1,2109 @@
+{
+  "codebook_id": "9f02d1deb5dad442",
+  "num_classes": 3,
+  "class_names": [
+    "butterfly",
+    "dalmatian",
+    "kangaroo"
+  ],
+  "n_clusters": 60,
+  "clusters_per_class": 20,
+  "descriptor_dim": 128,
+  "total_descriptors": 35699,
+  "num_train_images": 183,
+  "num_test_images": 61,
+  "mean_descriptors_per_image": 195.07650273224044,
+  "clustering_algorithm": "MiniBatchKMeans",
+  "random_state": 0,
+  "batch_size": 1024,
+  "max_iter": 100,
+  "n_init": 3,
+  "patch_size": 28,
+  "cluster_counts": [
+    625,
+    643,
+    539,
+    591,
+    608,
+    745,
+    524,
+    506,
+    599,
+    680,
+    1048,
+    538,
+    758,
+    528,
+    537,
+    661,
+    652,
+    475,
+    445,
+    787,
+    682,
+    431,
+    587,
+    653,
+    595,
+    397,
+    537,
+    599,
+    616,
+    521,
+    443,
+    613,
+    498,
+    572,
+    523,
+    706,
+    475,
+    612,
+    777,
+    732,
+    514,
+    697,
+    591,
+    659,
+    730,
+    624,
+    647,
+    533,
+    559,
+    425,
+    591,
+    469,
+    456,
+    586,
+    592,
+    651,
+    643,
+    517,
+    533,
+    624
+  ],
+  "training_time_s": 18.76145779999206,
+  "dataset_dir": "datasets\\Caltech_101_subset",
+  "descriptor_config": {
+    "method": "SIFT",
+    "max_keypoints": 500,
+    "contrast_threshold": 0.04,
+    "edge_threshold": 10.0,
+    "sigma": 1.6,
+    "n_octaves": 4,
+    "n_scales": 3,
+    "upsampling": 1,
+    "fast_threshold": 0.08,
+    "grayscale": true
+  },
+  "visual_word_sources": [
+    {
+      "word_index": 0,
+      "train_record_index": 33,
+      "filename": "image_0069.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 16.0,
+      "keypoint_col": 128.0,
+      "distance_to_centroid": 247.0474853515625
+    },
+    {
+      "word_index": 1,
+      "train_record_index": 154,
+      "filename": "image_0010.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 210.0,
+      "keypoint_col": 234.0,
+      "distance_to_centroid": 232.49644470214844
+    },
+    {
+      "word_index": 2,
+      "train_record_index": 13,
+      "filename": "image_0042.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 61.0,
+      "keypoint_col": 209.0,
+      "distance_to_centroid": 201.8876495361328
+    },
+    {
+      "word_index": 3,
+      "train_record_index": 27,
+      "filename": "image_0082.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 108.0,
+      "keypoint_col": 264.0,
+      "distance_to_centroid": 184.1155548095703
+    },
+    {
+      "word_index": 4,
+      "train_record_index": 38,
+      "filename": "image_0038.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 46.0,
+      "keypoint_col": 83.0,
+      "distance_to_centroid": 241.0455780029297
+    },
+    {
+      "word_index": 5,
+      "train_record_index": 39,
+      "filename": "image_0043.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 58.0,
+      "keypoint_col": 81.0,
+      "distance_to_centroid": 223.45289611816406
+    },
+    {
+      "word_index": 6,
+      "train_record_index": 65,
+      "filename": "image_0035.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 90.0,
+      "keypoint_col": 84.0,
+      "distance_to_centroid": 202.0739288330078
+    },
+    {
+      "word_index": 7,
+      "train_record_index": 55,
+      "filename": "image_0003.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 43.0,
+      "keypoint_col": 192.0,
+      "distance_to_centroid": 250.92137145996094
+    },
+    {
+      "word_index": 8,
+      "train_record_index": 22,
+      "filename": "image_0024.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 285.0,
+      "keypoint_col": 103.0,
+      "distance_to_centroid": 245.58343505859375
+    },
+    {
+      "word_index": 9,
+      "train_record_index": 35,
+      "filename": "image_0001.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 165.0,
+      "keypoint_col": 232.0,
+      "distance_to_centroid": 153.05844116210938
+    },
+    {
+      "word_index": 10,
+      "train_record_index": 132,
+      "filename": "image_0028.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 198.0,
+      "keypoint_col": 254.0,
+      "distance_to_centroid": 135.17591857910156
+    },
+    {
+      "word_index": 11,
+      "train_record_index": 154,
+      "filename": "image_0010.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 96.0,
+      "keypoint_col": 209.0,
+      "distance_to_centroid": 233.1013946533203
+    },
+    {
+      "word_index": 12,
+      "train_record_index": 2,
+      "filename": "image_0020.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 77.0,
+      "keypoint_col": 46.0,
+      "distance_to_centroid": 222.17465209960938
+    },
+    {
+      "word_index": 13,
+      "train_record_index": 53,
+      "filename": "image_0046.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 158.0,
+      "keypoint_col": 139.0,
+      "distance_to_centroid": 234.8727264404297
+    },
+    {
+      "word_index": 14,
+      "train_record_index": 17,
+      "filename": "image_0006.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 98.0,
+      "keypoint_col": 206.0,
+      "distance_to_centroid": 236.24069213867188
+    },
+    {
+      "word_index": 15,
+      "train_record_index": 147,
+      "filename": "image_0005.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 81.0,
+      "keypoint_col": 157.0,
+      "distance_to_centroid": 193.38348388671875
+    },
+    {
+      "word_index": 16,
+      "train_record_index": 94,
+      "filename": "image_0033.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 139.0,
+      "keypoint_col": 24.0,
+      "distance_to_centroid": 198.52923583984375
+    },
+    {
+      "word_index": 17,
+      "train_record_index": 88,
+      "filename": "image_0046.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 177.0,
+      "keypoint_col": 72.0,
+      "distance_to_centroid": 245.3759002685547
+    },
+    {
+      "word_index": 18,
+      "train_record_index": 79,
+      "filename": "image_0029.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 53.0,
+      "keypoint_col": 265.0,
+      "distance_to_centroid": 214.90560913085938
+    },
+    {
+      "word_index": 19,
+      "train_record_index": 8,
+      "filename": "image_0023.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 81.0,
+      "keypoint_col": 74.0,
+      "distance_to_centroid": 230.23060607910156
+    },
+    {
+      "word_index": 20,
+      "train_record_index": 138,
+      "filename": "image_0008.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 47.0,
+      "keypoint_col": 252.0,
+      "distance_to_centroid": 210.72732543945312
+    },
+    {
+      "word_index": 21,
+      "train_record_index": 31,
+      "filename": "image_0035.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 234.0,
+      "keypoint_col": 57.0,
+      "distance_to_centroid": 197.05953979492188
+    },
+    {
+      "word_index": 22,
+      "train_record_index": 174,
+      "filename": "image_0055.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 141.0,
+      "keypoint_col": 157.0,
+      "distance_to_centroid": 260.58392333984375
+    },
+    {
+      "word_index": 23,
+      "train_record_index": 76,
+      "filename": "image_0048.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 160.0,
+      "keypoint_col": 234.0,
+      "distance_to_centroid": 257.080810546875
+    },
+    {
+      "word_index": 24,
+      "train_record_index": 114,
+      "filename": "image_0058.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 151.0,
+      "keypoint_col": 85.0,
+      "distance_to_centroid": 214.33290100097656
+    },
+    {
+      "word_index": 25,
+      "train_record_index": 157,
+      "filename": "image_0054.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 159.0,
+      "keypoint_col": 165.0,
+      "distance_to_centroid": 153.29522705078125
+    },
+    {
+      "word_index": 26,
+      "train_record_index": 76,
+      "filename": "image_0048.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 26.0,
+      "keypoint_col": 257.0,
+      "distance_to_centroid": 236.63002014160156
+    },
+    {
+      "word_index": 27,
+      "train_record_index": 78,
+      "filename": "image_0049.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 136.0,
+      "keypoint_col": 232.0,
+      "distance_to_centroid": 221.79849243164062
+    },
+    {
+      "word_index": 28,
+      "train_record_index": 42,
+      "filename": "image_0052.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 85.0,
+      "keypoint_col": 276.0,
+      "distance_to_centroid": 201.463623046875
+    },
+    {
+      "word_index": 29,
+      "train_record_index": 67,
+      "filename": "image_0020.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 114.0,
+      "keypoint_col": 118.0,
+      "distance_to_centroid": 232.1199951171875
+    },
+    {
+      "word_index": 30,
+      "train_record_index": 51,
+      "filename": "image_0067.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 261.0,
+      "keypoint_col": 148.0,
+      "distance_to_centroid": 256.9454650878906
+    },
+    {
+      "word_index": 31,
+      "train_record_index": 38,
+      "filename": "image_0038.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 52.0,
+      "keypoint_col": 159.0,
+      "distance_to_centroid": 216.5299530029297
+    },
+    {
+      "word_index": 32,
+      "train_record_index": 149,
+      "filename": "image_0056.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 288.0,
+      "keypoint_col": 86.0,
+      "distance_to_centroid": 224.8428955078125
+    },
+    {
+      "word_index": 33,
+      "train_record_index": 57,
+      "filename": "image_0002.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 97.0,
+      "keypoint_col": 186.0,
+      "distance_to_centroid": 207.30751037597656
+    },
+    {
+      "word_index": 34,
+      "train_record_index": 168,
+      "filename": "image_0056.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 272.0,
+      "keypoint_col": 171.0,
+      "distance_to_centroid": 221.74742126464844
+    },
+    {
+      "word_index": 35,
+      "train_record_index": 93,
+      "filename": "image_0003.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 234.0,
+      "keypoint_col": 136.0,
+      "distance_to_centroid": 247.23617553710938
+    },
+    {
+      "word_index": 36,
+      "train_record_index": 75,
+      "filename": "image_0013.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 129.0,
+      "keypoint_col": 158.0,
+      "distance_to_centroid": 223.4916229248047
+    },
+    {
+      "word_index": 37,
+      "train_record_index": 69,
+      "filename": "image_0056.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 75.0,
+      "keypoint_col": 285.0,
+      "distance_to_centroid": 227.4643096923828
+    },
+    {
+      "word_index": 38,
+      "train_record_index": 146,
+      "filename": "image_0040.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 96.0,
+      "keypoint_col": 73.0,
+      "distance_to_centroid": 113.14730072021484
+    },
+    {
+      "word_index": 39,
+      "train_record_index": 79,
+      "filename": "image_0029.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 68.0,
+      "keypoint_col": 271.0,
+      "distance_to_centroid": 161.5336456298828
+    },
+    {
+      "word_index": 40,
+      "train_record_index": 21,
+      "filename": "image_0072.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 77.0,
+      "keypoint_col": 114.0,
+      "distance_to_centroid": 230.901123046875
+    },
+    {
+      "word_index": 41,
+      "train_record_index": 35,
+      "filename": "image_0001.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 54.0,
+      "keypoint_col": 101.0,
+      "distance_to_centroid": 170.16024780273438
+    },
+    {
+      "word_index": 42,
+      "train_record_index": 79,
+      "filename": "image_0029.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 16.0,
+      "keypoint_col": 223.0,
+      "distance_to_centroid": 215.1483612060547
+    },
+    {
+      "word_index": 43,
+      "train_record_index": 129,
+      "filename": "image_0068.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 172.0,
+      "keypoint_col": 48.0,
+      "distance_to_centroid": 214.99020385742188
+    },
+    {
+      "word_index": 44,
+      "train_record_index": 164,
+      "filename": "image_0060.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 130.0,
+      "keypoint_col": 125.0,
+      "distance_to_centroid": 207.52566528320312
+    },
+    {
+      "word_index": 45,
+      "train_record_index": 103,
+      "filename": "image_0050.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 96.0,
+      "keypoint_col": 36.0,
+      "distance_to_centroid": 217.20225524902344
+    },
+    {
+      "word_index": 46,
+      "train_record_index": 83,
+      "filename": "image_0083.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 129.0,
+      "keypoint_col": 66.0,
+      "distance_to_centroid": 165.4156036376953
+    },
+    {
+      "word_index": 47,
+      "train_record_index": 97,
+      "filename": "image_0050.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 225.0,
+      "keypoint_col": 75.0,
+      "distance_to_centroid": 230.4660186767578
+    },
+    {
+      "word_index": 48,
+      "train_record_index": 173,
+      "filename": "image_0083.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 79.0,
+      "keypoint_col": 244.0,
+      "distance_to_centroid": 216.0357208251953
+    },
+    {
+      "word_index": 49,
+      "train_record_index": 107,
+      "filename": "image_0004.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 118.0,
+      "keypoint_col": 166.0,
+      "distance_to_centroid": 234.1053009033203
+    },
+    {
+      "word_index": 50,
+      "train_record_index": 36,
+      "filename": "image_0021.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 36.0,
+      "keypoint_col": 251.0,
+      "distance_to_centroid": 209.37339782714844
+    },
+    {
+      "word_index": 51,
+      "train_record_index": 155,
+      "filename": "image_0012.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 40.0,
+      "keypoint_col": 280.0,
+      "distance_to_centroid": 248.20745849609375
+    },
+    {
+      "word_index": 52,
+      "train_record_index": 60,
+      "filename": "image_0064.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 88.0,
+      "keypoint_col": 152.0,
+      "distance_to_centroid": 227.8252716064453
+    },
+    {
+      "word_index": 53,
+      "train_record_index": 32,
+      "filename": "image_0080.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 140.0,
+      "keypoint_col": 172.0,
+      "distance_to_centroid": 229.3087921142578
+    },
+    {
+      "word_index": 54,
+      "train_record_index": 51,
+      "filename": "image_0067.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 144.0,
+      "keypoint_col": 66.0,
+      "distance_to_centroid": 228.036376953125
+    },
+    {
+      "word_index": 55,
+      "train_record_index": 127,
+      "filename": "image_0060.jpg",
+      "class_name": "butterfly",
+      "keypoint_row": 62.0,
+      "keypoint_col": 109.0,
+      "distance_to_centroid": 213.96987915039062
+    },
+    {
+      "word_index": 56,
+      "train_record_index": 91,
+      "filename": "image_0039.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 18.0,
+      "keypoint_col": 92.0,
+      "distance_to_centroid": 251.5699920654297
+    },
+    {
+      "word_index": 57,
+      "train_record_index": 160,
+      "filename": "image_0015.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 48.0,
+      "keypoint_col": 233.0,
+      "distance_to_centroid": 234.5058135986328
+    },
+    {
+      "word_index": 58,
+      "train_record_index": 50,
+      "filename": "image_0026.jpg",
+      "class_name": "dalmatian",
+      "keypoint_row": 158.0,
+      "keypoint_col": 227.0,
+      "distance_to_centroid": 227.3885040283203
+    },
+    {
+      "word_index": 59,
+      "train_record_index": 40,
+      "filename": "image_0065.jpg",
+      "class_name": "kangaroo",
+      "keypoint_row": 174.0,
+      "keypoint_col": 68.0,
+      "distance_to_centroid": 214.31153869628906
+    }
+  ],
+  "train_records": [
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0062.jpg",
+      "filename": "image_0062.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0036.jpg",
+      "filename": "image_0036.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0020.jpg",
+      "filename": "image_0020.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0078.jpg",
+      "filename": "image_0078.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0008.jpg",
+      "filename": "image_0008.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0021.jpg",
+      "filename": "image_0021.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0079.jpg",
+      "filename": "image_0079.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0002.jpg",
+      "filename": "image_0002.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0023.jpg",
+      "filename": "image_0023.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0013.jpg",
+      "filename": "image_0013.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0081.jpg",
+      "filename": "image_0081.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0077.jpg",
+      "filename": "image_0077.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0028.jpg",
+      "filename": "image_0028.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0042.jpg",
+      "filename": "image_0042.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0005.jpg",
+      "filename": "image_0005.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0008.jpg",
+      "filename": "image_0008.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0011.jpg",
+      "filename": "image_0011.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0006.jpg",
+      "filename": "image_0006.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0081.jpg",
+      "filename": "image_0081.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0001.jpg",
+      "filename": "image_0001.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0007.jpg",
+      "filename": "image_0007.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0072.jpg",
+      "filename": "image_0072.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0024.jpg",
+      "filename": "image_0024.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0046.jpg",
+      "filename": "image_0046.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0014.jpg",
+      "filename": "image_0014.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0058.jpg",
+      "filename": "image_0058.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0061.jpg",
+      "filename": "image_0061.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0082.jpg",
+      "filename": "image_0082.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0057.jpg",
+      "filename": "image_0057.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0016.jpg",
+      "filename": "image_0016.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0034.jpg",
+      "filename": "image_0034.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0035.jpg",
+      "filename": "image_0035.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0080.jpg",
+      "filename": "image_0080.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0069.jpg",
+      "filename": "image_0069.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0049.jpg",
+      "filename": "image_0049.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0001.jpg",
+      "filename": "image_0001.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0021.jpg",
+      "filename": "image_0021.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0065.jpg",
+      "filename": "image_0065.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0038.jpg",
+      "filename": "image_0038.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0043.jpg",
+      "filename": "image_0043.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0065.jpg",
+      "filename": "image_0065.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0020.jpg",
+      "filename": "image_0020.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0052.jpg",
+      "filename": "image_0052.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0051.jpg",
+      "filename": "image_0051.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0018.jpg",
+      "filename": "image_0018.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0017.jpg",
+      "filename": "image_0017.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0017.jpg",
+      "filename": "image_0017.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0077.jpg",
+      "filename": "image_0077.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0047.jpg",
+      "filename": "image_0047.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0053.jpg",
+      "filename": "image_0053.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0026.jpg",
+      "filename": "image_0026.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0067.jpg",
+      "filename": "image_0067.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0057.jpg",
+      "filename": "image_0057.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0046.jpg",
+      "filename": "image_0046.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0047.jpg",
+      "filename": "image_0047.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0003.jpg",
+      "filename": "image_0003.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0091.jpg",
+      "filename": "image_0091.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0002.jpg",
+      "filename": "image_0002.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0058.jpg",
+      "filename": "image_0058.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0062.jpg",
+      "filename": "image_0062.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0064.jpg",
+      "filename": "image_0064.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0002.jpg",
+      "filename": "image_0002.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0048.jpg",
+      "filename": "image_0048.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0016.jpg",
+      "filename": "image_0016.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0074.jpg",
+      "filename": "image_0074.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0035.jpg",
+      "filename": "image_0035.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0027.jpg",
+      "filename": "image_0027.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0020.jpg",
+      "filename": "image_0020.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0053.jpg",
+      "filename": "image_0053.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0056.jpg",
+      "filename": "image_0056.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0066.jpg",
+      "filename": "image_0066.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0051.jpg",
+      "filename": "image_0051.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0036.jpg",
+      "filename": "image_0036.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0073.jpg",
+      "filename": "image_0073.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0023.jpg",
+      "filename": "image_0023.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0013.jpg",
+      "filename": "image_0013.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0048.jpg",
+      "filename": "image_0048.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0075.jpg",
+      "filename": "image_0075.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0049.jpg",
+      "filename": "image_0049.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0029.jpg",
+      "filename": "image_0029.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0036.jpg",
+      "filename": "image_0036.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0045.jpg",
+      "filename": "image_0045.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0075.jpg",
+      "filename": "image_0075.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0083.jpg",
+      "filename": "image_0083.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0085.jpg",
+      "filename": "image_0085.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0087.jpg",
+      "filename": "image_0087.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0027.jpg",
+      "filename": "image_0027.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0024.jpg",
+      "filename": "image_0024.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0046.jpg",
+      "filename": "image_0046.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0059.jpg",
+      "filename": "image_0059.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0074.jpg",
+      "filename": "image_0074.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0039.jpg",
+      "filename": "image_0039.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0031.jpg",
+      "filename": "image_0031.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0003.jpg",
+      "filename": "image_0003.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0033.jpg",
+      "filename": "image_0033.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0053.jpg",
+      "filename": "image_0053.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0044.jpg",
+      "filename": "image_0044.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0050.jpg",
+      "filename": "image_0050.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0063.jpg",
+      "filename": "image_0063.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0027.jpg",
+      "filename": "image_0027.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0039.jpg",
+      "filename": "image_0039.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0023.jpg",
+      "filename": "image_0023.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0086.jpg",
+      "filename": "image_0086.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0050.jpg",
+      "filename": "image_0050.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0009.jpg",
+      "filename": "image_0009.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0041.jpg",
+      "filename": "image_0041.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0070.jpg",
+      "filename": "image_0070.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0004.jpg",
+      "filename": "image_0004.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0063.jpg",
+      "filename": "image_0063.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0031.jpg",
+      "filename": "image_0031.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0005.jpg",
+      "filename": "image_0005.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0079.jpg",
+      "filename": "image_0079.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0011.jpg",
+      "filename": "image_0011.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0055.jpg",
+      "filename": "image_0055.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0058.jpg",
+      "filename": "image_0058.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0069.jpg",
+      "filename": "image_0069.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0009.jpg",
+      "filename": "image_0009.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0006.jpg",
+      "filename": "image_0006.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0025.jpg",
+      "filename": "image_0025.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0043.jpg",
+      "filename": "image_0043.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0028.jpg",
+      "filename": "image_0028.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0033.jpg",
+      "filename": "image_0033.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0019.jpg",
+      "filename": "image_0019.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0007.jpg",
+      "filename": "image_0007.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0029.jpg",
+      "filename": "image_0029.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0044.jpg",
+      "filename": "image_0044.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0032.jpg",
+      "filename": "image_0032.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0060.jpg",
+      "filename": "image_0060.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0012.jpg",
+      "filename": "image_0012.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0068.jpg",
+      "filename": "image_0068.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0072.jpg",
+      "filename": "image_0072.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0007.jpg",
+      "filename": "image_0007.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0028.jpg",
+      "filename": "image_0028.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0025.jpg",
+      "filename": "image_0025.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0015.jpg",
+      "filename": "image_0015.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0018.jpg",
+      "filename": "image_0018.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0015.jpg",
+      "filename": "image_0015.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0085.jpg",
+      "filename": "image_0085.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0008.jpg",
+      "filename": "image_0008.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0009.jpg",
+      "filename": "image_0009.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0032.jpg",
+      "filename": "image_0032.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0018.jpg",
+      "filename": "image_0018.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0041.jpg",
+      "filename": "image_0041.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0039.jpg",
+      "filename": "image_0039.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0038.jpg",
+      "filename": "image_0038.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0067.jpg",
+      "filename": "image_0067.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0040.jpg",
+      "filename": "image_0040.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0005.jpg",
+      "filename": "image_0005.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0029.jpg",
+      "filename": "image_0029.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0056.jpg",
+      "filename": "image_0056.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0061.jpg",
+      "filename": "image_0061.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0030.jpg",
+      "filename": "image_0030.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0044.jpg",
+      "filename": "image_0044.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0006.jpg",
+      "filename": "image_0006.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0010.jpg",
+      "filename": "image_0010.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0012.jpg",
+      "filename": "image_0012.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0054.jpg",
+      "filename": "image_0054.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0054.jpg",
+      "filename": "image_0054.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0034.jpg",
+      "filename": "image_0034.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0080.jpg",
+      "filename": "image_0080.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0015.jpg",
+      "filename": "image_0015.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0019.jpg",
+      "filename": "image_0019.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0004.jpg",
+      "filename": "image_0004.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0064.jpg",
+      "filename": "image_0064.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0060.jpg",
+      "filename": "image_0060.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0045.jpg",
+      "filename": "image_0045.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0052.jpg",
+      "filename": "image_0052.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0050.jpg",
+      "filename": "image_0050.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0056.jpg",
+      "filename": "image_0056.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0012.jpg",
+      "filename": "image_0012.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0024.jpg",
+      "filename": "image_0024.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0054.jpg",
+      "filename": "image_0054.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0042.jpg",
+      "filename": "image_0042.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0083.jpg",
+      "filename": "image_0083.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0055.jpg",
+      "filename": "image_0055.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0031.jpg",
+      "filename": "image_0031.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0059.jpg",
+      "filename": "image_0059.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0037.jpg",
+      "filename": "image_0037.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0016.jpg",
+      "filename": "image_0016.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0060.jpg",
+      "filename": "image_0060.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0052.jpg",
+      "filename": "image_0052.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0003.jpg",
+      "filename": "image_0003.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0076.jpg",
+      "filename": "image_0076.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    }
+  ],
+  "test_records": [
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0019.jpg",
+      "filename": "image_0019.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0045.jpg",
+      "filename": "image_0045.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0022.jpg",
+      "filename": "image_0022.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0048.jpg",
+      "filename": "image_0048.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0010.jpg",
+      "filename": "image_0010.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0037.jpg",
+      "filename": "image_0037.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0063.jpg",
+      "filename": "image_0063.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0066.jpg",
+      "filename": "image_0066.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0078.jpg",
+      "filename": "image_0078.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0010.jpg",
+      "filename": "image_0010.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0064.jpg",
+      "filename": "image_0064.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0022.jpg",
+      "filename": "image_0022.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0051.jpg",
+      "filename": "image_0051.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0059.jpg",
+      "filename": "image_0059.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0034.jpg",
+      "filename": "image_0034.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0062.jpg",
+      "filename": "image_0062.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0061.jpg",
+      "filename": "image_0061.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0040.jpg",
+      "filename": "image_0040.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0038.jpg",
+      "filename": "image_0038.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0057.jpg",
+      "filename": "image_0057.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0030.jpg",
+      "filename": "image_0030.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0076.jpg",
+      "filename": "image_0076.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0025.jpg",
+      "filename": "image_0025.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0071.jpg",
+      "filename": "image_0071.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0041.jpg",
+      "filename": "image_0041.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0014.jpg",
+      "filename": "image_0014.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0086.jpg",
+      "filename": "image_0086.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0037.jpg",
+      "filename": "image_0037.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0047.jpg",
+      "filename": "image_0047.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0067.jpg",
+      "filename": "image_0067.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0070.jpg",
+      "filename": "image_0070.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0001.jpg",
+      "filename": "image_0001.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0033.jpg",
+      "filename": "image_0033.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0073.jpg",
+      "filename": "image_0073.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0011.jpg",
+      "filename": "image_0011.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0089.jpg",
+      "filename": "image_0089.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0090.jpg",
+      "filename": "image_0090.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0035.jpg",
+      "filename": "image_0035.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0082.jpg",
+      "filename": "image_0082.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0021.jpg",
+      "filename": "image_0021.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0004.jpg",
+      "filename": "image_0004.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0030.jpg",
+      "filename": "image_0030.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0017.jpg",
+      "filename": "image_0017.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0088.jpg",
+      "filename": "image_0088.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0013.jpg",
+      "filename": "image_0013.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0068.jpg",
+      "filename": "image_0068.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0049.jpg",
+      "filename": "image_0049.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0026.jpg",
+      "filename": "image_0026.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0040.jpg",
+      "filename": "image_0040.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0026.jpg",
+      "filename": "image_0026.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0065.jpg",
+      "filename": "image_0065.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0043.jpg",
+      "filename": "image_0043.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0042.jpg",
+      "filename": "image_0042.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0022.jpg",
+      "filename": "image_0022.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\dalmatian\\image_0014.jpg",
+      "filename": "image_0014.jpg",
+      "class_name": "dalmatian",
+      "class_id": 1
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0055.jpg",
+      "filename": "image_0055.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0084.jpg",
+      "filename": "image_0084.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0066.jpg",
+      "filename": "image_0066.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0032.jpg",
+      "filename": "image_0032.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\kangaroo\\image_0071.jpg",
+      "filename": "image_0071.jpg",
+      "class_name": "kangaroo",
+      "class_id": 2
+    },
+    {
+      "path": "datasets\\Caltech_101_subset\\butterfly\\image_0084.jpg",
+      "filename": "image_0084.jpg",
+      "class_name": "butterfly",
+      "class_id": 0
+    }
+  ],
+  "model_dir": "models\\visual_words\\codebook_002"
+}

@@ -222,8 +222,7 @@ def load_face_dataset(
                 "index": int(i),
                 "dataset_index": int(orig_i),
                 "filename": (
-                    f"lfw_train_{i:04d}_"
-                    f"{target_names[int(lbl)].replace(' ', '_')}.png"
+                    f"lfw_train_{i:04d}_{target_names[int(lbl)].replace(' ', '_')}.png"
                 ),
                 "path": None,
                 "person_label": int(lbl),
@@ -237,8 +236,7 @@ def load_face_dataset(
                 "index": int(i),
                 "dataset_index": int(orig_i),
                 "filename": (
-                    f"lfw_test_{i:04d}_"
-                    f"{target_names[int(lbl)].replace(' ', '_')}.png"
+                    f"lfw_test_{i:04d}_{target_names[int(lbl)].replace(' ', '_')}.png"
                 ),
                 "path": None,
                 "person_label": int(lbl),
