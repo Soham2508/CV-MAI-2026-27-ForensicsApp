@@ -9,6 +9,9 @@ from .convolution import ConvolutionTool
 from .corner_detection import CornerDetectionTool
 from .descriptor_extraction import DescriptorExtractionTool
 from .edge_overlay import EdgeOverlayTool
+from .eigenface_trainer import EigenfaceTrainerTool
+from .face_detection import FaceDetectionTool
+from .face_recognition import FaceRecognitionTool
 from .grayscale import GrayscaleTool
 from .histogram import HistogramTool
 from .hog_extraction_visualization import HOGVisualizationTool
@@ -20,6 +23,8 @@ from .ncc_image import NormalizedCrossCorrelationTool
 from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
+from .viola_jones_trainer import ViolaJonesTrainerTool
+from .webcam_detection import WebcamFaceDetectionTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -46,8 +51,23 @@ def build_tool_registry() -> ToolRegistry:
             DescriptorExtractionTool(),
             ImageMatchingTool(),
             BestImageMatchInDirTool(),
+            ViolaJonesTrainerTool(),
+            FaceDetectionTool(),
+            WebcamFaceDetectionTool(),
+            EigenfaceTrainerTool(),
+            FaceRecognitionTool(),
         ]
     )
 
 
-__all__ = ["ToolRegistry", "build_tool_registry"]
+__all__ = [
+    "IMAGE_TYPES",
+    "ToolRegistry",
+    "build_tool_registry",
+    "detect_with_hog",
+    "ViolaJonesTrainerTool",
+    "FaceDetectionTool",
+    "WebcamFaceDetectionTool",
+    "EigenfaceTrainerTool",
+    "FaceRecognitionTool",
+]
