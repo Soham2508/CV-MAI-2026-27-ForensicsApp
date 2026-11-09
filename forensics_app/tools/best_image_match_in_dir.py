@@ -161,7 +161,10 @@ def find_best_image_match(
         if file_path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
         # Exclude the query image if found again in the search directory
-        if query_resolved_path is not None and file_path.resolve() == query_resolved_path:
+        if (
+            query_resolved_path is not None
+            and file_path.resolve() == query_resolved_path
+        ):
             continue
 
         total_candidates_checked += 1
@@ -268,7 +271,9 @@ def ask_directory_match_parameters(
     main_container.pack(fill="both", expand=True)
 
     # Method selector
-    method_frame = ttk.LabelFrame(main_container, text="Descriptor Method", padding=(10, 6))
+    method_frame = ttk.LabelFrame(
+        main_container, text="Descriptor Method", padding=(10, 6)
+    )
     method_frame.pack(fill="x", pady=(0, 8))
 
     ttk.Label(method_frame, text="Extraction method:").pack(side="left", padx=(0, 10))
@@ -340,7 +345,14 @@ def ask_directory_match_parameters(
     sift_sigma_spin.grid(row=3, column=1, sticky="w", padx=(8, 0), pady=4)
 
     orb_widgets = [orb_lbl, orb_spin]
-    sift_widgets = [sift_oct_lbl, sift_oct_spin, sift_scale_lbl, sift_scale_spin, sift_sigma_lbl, sift_sigma_spin]
+    sift_widgets = [
+        sift_oct_lbl,
+        sift_oct_spin,
+        sift_scale_lbl,
+        sift_scale_spin,
+        sift_sigma_lbl,
+        sift_sigma_spin,
+    ]
 
     def _update_visibility(method: str) -> None:
         if method == "ORB":
@@ -358,7 +370,9 @@ def ask_directory_match_parameters(
     _update_visibility(method_var.get())
 
     # Matching & RANSAC frame
-    match_frame = ttk.LabelFrame(main_container, text="Matching & RANSAC Settings", padding=(10, 8))
+    match_frame = ttk.LabelFrame(
+        main_container, text="Matching & RANSAC Settings", padding=(10, 8)
+    )
     match_frame.pack(fill="x", pady=(0, 8))
 
     ttk.Checkbutton(
@@ -367,7 +381,9 @@ def ask_directory_match_parameters(
         variable=cross_check_var,
     ).grid(row=0, column=0, columnspan=2, sticky="w", pady=3)
 
-    ttk.Label(match_frame, text="Max distance ratio:").grid(row=1, column=0, sticky="w", pady=3)
+    ttk.Label(match_frame, text="Max distance ratio:").grid(
+        row=1, column=0, sticky="w", pady=3
+    )
     ttk.Spinbox(
         match_frame,
         textvariable=max_ratio_var,
@@ -377,7 +393,9 @@ def ask_directory_match_parameters(
         width=8,
     ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=3)
 
-    ttk.Label(match_frame, text="RANSAC residual threshold (px):").grid(row=2, column=0, sticky="w", pady=3)
+    ttk.Label(match_frame, text="RANSAC residual threshold (px):").grid(
+        row=2, column=0, sticky="w", pady=3
+    )
     ttk.Spinbox(
         match_frame,
         textvariable=residual_thresh_var,
@@ -387,7 +405,9 @@ def ask_directory_match_parameters(
         width=8,
     ).grid(row=2, column=1, sticky="w", padx=(8, 0), pady=3)
 
-    ttk.Label(match_frame, text="RANSAC max trials:").grid(row=3, column=0, sticky="w", pady=3)
+    ttk.Label(match_frame, text="RANSAC max trials:").grid(
+        row=3, column=0, sticky="w", pady=3
+    )
     ttk.Spinbox(
         match_frame,
         textvariable=max_trials_var,
@@ -397,7 +417,9 @@ def ask_directory_match_parameters(
         width=8,
     ).grid(row=3, column=1, sticky="w", padx=(8, 0), pady=3)
 
-    ttk.Label(match_frame, text="Min inliers for confident match:").grid(row=4, column=0, sticky="w", pady=3)
+    ttk.Label(match_frame, text="Min inliers for confident match:").grid(
+        row=4, column=0, sticky="w", pady=3
+    )
     ttk.Spinbox(
         match_frame,
         textvariable=min_inliers_var,
@@ -436,7 +458,12 @@ def ask_directory_match_parameters(
             max_trials = int(max_trials_var.get())
             min_inliers = int(min_inliers_var.get())
 
-            if not 0.0 < max_ratio <= 1.0 or residual_thresh <= 0 or max_trials < 1 or min_inliers < 1:
+            if (
+                not 0.0 < max_ratio <= 1.0
+                or residual_thresh <= 0
+                or max_trials < 1
+                or min_inliers < 1
+            ):
                 raise ValueError
         except (ValueError, TypeError):
             messagebox.showerror(
@@ -474,7 +501,9 @@ class BestImageMatchInDirTool(ForensicsTool):
     tool_id = "best_image_match_in_dir"
     title = "Best image match in directory"
     category = "Matching & Descriptors"
-    description = "Search an image directory and identify the best match using RANSAC inliers."
+    description = (
+        "Search an image directory and identify the best match using RANSAC inliers."
+    )
     requires_image = True
 
     def run(

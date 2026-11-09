@@ -1,0 +1,46 @@
+{
+  "codebook_id": "a8e5c8f7f9217264",
+  "n_clusters": 30,
+  "class_names": [
+    "butterfly",
+    "dalmatian",
+    "kangaroo"
+  ],
+  "normalization": "l1",
+  "algorithm_key": "knn",
+  "algorithm": "K-NN",
+  "C": 1.0,
+  "gamma": "scale",
+  "class_weight": null,
+  "n_neighbors": 9,
+  "knn_weights": "distance",
+  "knn_metric": "euclidean",
+  "n_estimators": 100,
+  "max_depth": null,
+  "min_samples_leaf": 1,
+  "random_state": 42,
+  "num_train_samples": 183,
+  "num_test_samples": 61,
+  "train_accuracy": 1.0,
+  "test_accuracy": 0.5245901639344263,
+  "confusion_matrix": [
+    [
+      2,
+      5,
+      16
+    ],
+    [
+      0,
+      15,
+      2
+    ],
+    [
+      0,
+      6,
+      15
+    ]
+  ],
+  "classification_report": "              precision    recall  f1-score   support\n\n   butterfly       1.00      0.09      0.16        23\n   dalmatian       0.58      0.88      0.70        17\n    kangaroo       0.45      0.71      0.56        21\n\n    accuracy                           0.52        61\n   macro avg       0.68      0.56      0.47        61\nweighted avg       0.69      0.52      0.45        61\n",
+  "training_time_s": 0.0006542999763041735,
+  "model_dir": "models\\visual_words\\codebook_001"
+}

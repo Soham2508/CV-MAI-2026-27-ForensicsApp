@@ -23,6 +23,10 @@ def extract_descriptors(
     n_octaves: int = 8,
     n_scales: int = 3,
     sigma_min: float = 1.6,
+    upsampling: int = 2,
+    c_dog: float | None = None,
+    c_edge: float = 10.0,
+    max_keypoints: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray, Image.Image]:
     """Detect and describe keypoints, and draw them as red circles.
 
@@ -37,6 +41,10 @@ def extract_descriptors(
         n_octaves=n_octaves,
         n_scales=n_scales,
         sigma_min=sigma_min,
+        upsampling=upsampling,
+        c_dog=c_dog,
+        c_edge=c_edge,
+        max_keypoints=max_keypoints,
     )
     output = image.convert("L").convert("RGB")
     drawing = ImageDraw.Draw(output)

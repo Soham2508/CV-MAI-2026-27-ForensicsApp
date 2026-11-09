@@ -18,7 +18,9 @@ from forensics_app.tools.image_matching import (
 
 class ImageMatchingTests(unittest.TestCase):
     def _create_textured_image(
-        self, size: tuple[int, int] = (120, 120), color: tuple[int, int, int] = (255, 0, 0)
+        self,
+        size: tuple[int, int] = (120, 120),
+        color: tuple[int, int, int] = (255, 0, 0),
     ) -> Image.Image:
         """Create a textured full-color RGB image with high-contrast checker-like features."""
         arr = np.zeros((*size, 3), dtype=np.uint8)
@@ -42,7 +44,9 @@ class ImageMatchingTests(unittest.TestCase):
 
     def test_extract_descriptors_orb_success(self) -> None:
         image = self._create_textured_image()
-        keypoints, descriptors = extract_descriptors(image, method="ORB", n_keypoints=100)
+        keypoints, descriptors = extract_descriptors(
+            image, method="ORB", n_keypoints=100
+        )
 
         self.assertIsInstance(keypoints, np.ndarray)
         self.assertEqual(keypoints.ndim, 2)
@@ -121,8 +125,12 @@ class ImageMatchingTests(unittest.TestCase):
         self.assertEqual(matches_orb.shape[1], 2)
         self.assertGreater(len(matches_orb), 0)
 
-        kp1_s, desc1_s = extract_descriptors(image1, "SIFT", n_octaves=4, n_scales=3, sigma_min=1.6)
-        kp2_s, desc2_s = extract_descriptors(image2, "SIFT", n_octaves=4, n_scales=3, sigma_min=1.6)
+        kp1_s, desc1_s = extract_descriptors(
+            image1, "SIFT", n_octaves=4, n_scales=3, sigma_min=1.6
+        )
+        kp2_s, desc2_s = extract_descriptors(
+            image2, "SIFT", n_octaves=4, n_scales=3, sigma_min=1.6
+        )
         matches_sift = match_image_descriptors(
             desc1_s, desc2_s, method="SIFT", cross_check=True, max_ratio=0.8
         )
@@ -207,7 +215,10 @@ class ImageMatchingTests(unittest.TestCase):
         document.current = self._create_textured_image()
         parent = MagicMock()
 
-        with patch("forensics_app.tools.image_matching.filedialog.askopenfilename", return_value=""):
+        with patch(
+            "forensics_app.tools.image_matching.filedialog.askopenfilename",
+            return_value="",
+        ):
             result = tool.run(parent, document)
             self.assertIsNone(result)
 

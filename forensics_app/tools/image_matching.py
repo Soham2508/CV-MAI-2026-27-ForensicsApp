@@ -272,7 +272,9 @@ def ask_matching_parameters(
     main_container.pack(fill="both", expand=True)
 
     # Top method selector (applies to both images)
-    method_frame = ttk.LabelFrame(main_container, text="Descriptor Method", padding=(10, 6))
+    method_frame = ttk.LabelFrame(
+        main_container, text="Descriptor Method", padding=(10, 6)
+    )
     method_frame.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
     ttk.Label(method_frame, text="Extraction method for both images:").pack(
@@ -406,7 +408,9 @@ def ask_matching_parameters(
     _update_visibility(method_var.get())
 
     # Matching options
-    match_frame = ttk.LabelFrame(main_container, text="Matching Settings", padding=(10, 8))
+    match_frame = ttk.LabelFrame(
+        main_container, text="Matching Settings", padding=(10, 8)
+    )
     match_frame.grid(row=2, column=0, columnspan=2, pady=(10, 0), sticky="ew")
 
     ttk.Checkbutton(
@@ -507,7 +511,9 @@ class ImageMatchingTool(ForensicsTool):
     tool_id = "image_matching"
     title = "Image matching"
     category = "Matching & Descriptors"
-    description = "Match ORB or SIFT descriptors between current image and a second image."
+    description = (
+        "Match ORB or SIFT descriptors between current image and a second image."
+    )
     requires_image = True
 
     def run(
@@ -549,12 +555,8 @@ class ImageMatchingTool(ForensicsTool):
         max_ratio = parameters.get("max_ratio", 0.8)
 
         # Extract descriptors using the same method for both images
-        keypoints1, descriptors1 = extract_descriptors(
-            image1, method, **left_settings
-        )
-        keypoints2, descriptors2 = extract_descriptors(
-            image2, method, **right_settings
-        )
+        keypoints1, descriptors1 = extract_descriptors(image1, method, **left_settings)
+        keypoints2, descriptors2 = extract_descriptors(image2, method, **right_settings)
 
         # Match descriptors
         matches = match_image_descriptors(

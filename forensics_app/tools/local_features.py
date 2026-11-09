@@ -26,12 +26,19 @@ def detect_and_describe(
     n_octaves: int = 8,
     n_scales: int = 3,
     sigma_min: float = 1.6,
+    upsampling: int = 2,
+    c_dog: float | None = None,
+    c_edge: float = 10.0,
+    max_keypoints: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Detect keypoints and compute descriptors with ORB or SIFT.
 
     Returns ``(keypoints, descriptors)``: keypoints are (row, col) with shape
     (N, 2); descriptors are (N, 256) booleans for ORB or (N, 128) uint8 for
     SIFT. A textureless image gives empty arrays rather than an error.
+    ``upsampling``, ``c_dog`` and ``c_edge`` are passed to SIFT (``c_dog=None``
+    keeps scikit-image's default). A positive ``max_keypoints`` keeps only the
+    first that many keypoints.
     """
     method_upper = method.upper() if isinstance(method, str) else ""
     if method_upper not in ("ORB", "SIFT"):
@@ -51,12 +58,16 @@ def detect_and_describe(
         # With upsampling=2 and sigma_in=0.5, sigma_min must be at least 1.
         if not math.isfinite(sigma_min) or sigma_min < 1.0:
             raise ValueError("SIFT sigma_min must be finite and at least 1.0.")
-        extractor = SIFT(
-            upsampling=2,
-            n_octaves=n_octaves,
-            n_scales=n_scales,
-            sigma_min=sigma_min,
-        )
+        sift_kwargs: dict[str, float | int] = {
+            "upsampling": upsampling,
+            "n_octaves": n_octaves,
+            "n_scales": n_scales,
+            "sigma_min": sigma_min,
+            "c_edge": c_edge,
+        }
+        if c_dog is not None:
+            sift_kwargs["c_dog"] = c_dog
+        extractor = SIFT(**sift_kwargs)
 
     minimum_size = MIN_IMAGE_SIZE[method_upper]
     if min(image.size) < minimum_size:
@@ -74,4 +85,9 @@ def detect_and_describe(
             raise
         width, dtype = DESCRIPTOR_LAYOUT[method_upper]
         return np.empty((0, 2), dtype=np.float64), np.empty((0, width), dtype=dtype)
-    return extractor.keypoints.copy(), extractor.descriptors.copy()
+    keypoints = extractor.keypoints.copy()
+    descriptors = extractor.descriptors.copy()
+    if max_keypoints is not None and 0 < max_keypoints < len(keypoints):
+        keypoints = keypoints[:max_keypoints]
+        descriptors = descriptors[:max_keypoints]
+    return keypoints, descriptors

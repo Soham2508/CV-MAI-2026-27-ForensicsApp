@@ -1,0 +1,12 @@
+{
+  "method": "SIFT",
+  "max_keypoints": 500,
+  "contrast_threshold": 0.04,
+  "edge_threshold": 10.0,
+  "sigma": 1.6,
+  "n_octaves": 4,
+  "n_scales": 3,
+  "upsampling": 1,
+  "fast_threshold": 0.08,
+  "grayscale": true
+}
