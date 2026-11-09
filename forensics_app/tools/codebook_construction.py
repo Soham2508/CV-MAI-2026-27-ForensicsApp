@@ -1,6 +1,6 @@
 """Set 7.1 — Codebook Construction (Bag of Visual Words Stage 1).
 
-Extracts local descriptors (SIFT/ORB, reusing ``descriptor_extraction.py``) from
+Extracts local descriptors (SIFT/ORB, reusing ``local_features.py``) from
 training images only, clusters them with ``MiniBatchKMeans`` / ``KMeans`` using
 ``K = 10 * num_classes``, extracts representative visual-word image patches
 nearest to each centroid, visualises the visual vocabulary gallery and cluster
@@ -13,27 +13,59 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 from pathlib import Path
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import tkinter.font as tkfont
 from typing import Any
 
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
 from PIL import Image
 from sklearn.cluster import KMeans, MiniBatchKMeans
 from sklearn.model_selection import train_test_split
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import DATASETS_DIR, MODELS_DIR, PROJECT_ROOT, resolve_path
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
-from .descriptor_extraction import extract_descriptors
+from .local_features import MIN_IMAGE_SIZE, detect_and_describe
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".pgm"}
-DEFAULT_DATASET_DIR = Path("datasets/Caltech_101_subset")
-DEFAULT_VISUAL_WORDS_ROOT = Path("models/visual_words")
+DEFAULT_DATASET_DIR = DATASETS_DIR / "Caltech_101_subset"
+DEFAULT_VISUAL_WORDS_ROOT = MODELS_DIR / "visual_words"
 DEFAULT_VISUAL_WORDS_MODEL_DIR = DEFAULT_VISUAL_WORDS_ROOT / "codebook_001"
+# scikit-image's SIFT accepts only these upsampling factors.
+SIFT_UPSAMPLING_FACTORS = (1, 2, 4)
+
+
+def portable_path(path: str | Path) -> str:
+    """Return ``path`` as a string that works on macOS, Linux and Windows.
+
+    Paths inside the project folder are stored relative to it with forward
+    slashes, so saved models keep working on a teammate's machine; other paths
+    are stored absolute (with forward slashes).
+    """
+    resolved = resolve_path(str(path).replace("\\", "/"))
+    try:
+        return resolved.resolve().relative_to(PROJECT_ROOT.resolve()).as_posix()
+    except ValueError:
+        return resolved.as_posix()
+
+
+def resolve_record_path(path: str | Path) -> Path:
+    """Resolve a stored image or folder path on the current machine.
+
+    Accepts paths saved on Windows (``datasets\\x\\y.jpg``) or macOS/Linux,
+    relative to the project folder or absolute.
+    """
+    text = str(path)
+    if "\\" in text and not Path(text).exists():
+        text = text.replace("\\", "/")
+    return resolve_path(text)
 
 
 def default_descriptor_config(
@@ -61,7 +93,9 @@ def default_descriptor_config(
         "sigma": float(sigma),
         "n_octaves": max(1, int(n_octaves)),
         "n_scales": max(1, int(n_scales)),
-        "upsampling": max(1, int(upsampling)),
+        "upsampling": min(
+            SIFT_UPSAMPLING_FACTORS, key=lambda f: (abs(f - int(upsampling)), f)
+        ),
         "fast_threshold": float(fast_threshold),
         "grayscale": bool(grayscale),
     }
@@ -101,7 +135,7 @@ def _collect_class_folders(folder: Path) -> dict[str, list[Path]]:
 
 def inspect_dataset_directory(dataset_dir: str | Path) -> dict[str, Any]:
     """Inspect a dataset directory and return detected classes and image counts."""
-    root = Path(dataset_dir)
+    root = resolve_record_path(dataset_dir)
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Dataset directory does not exist: {root}")
 
@@ -194,7 +228,7 @@ def load_visual_words_dataset(
             for p in tr_files:
                 train_records.append(
                     {
-                        "path": str(p),
+                        "path": portable_path(p),
                         "filename": p.name,
                         "class_name": cname,
                         "class_id": cid,
@@ -203,7 +237,7 @@ def load_visual_words_dataset(
             for p in te_files:
                 test_records.append(
                     {
-                        "path": str(p),
+                        "path": portable_path(p),
                         "filename": p.name,
                         "class_name": cname,
                         "class_id": cid,
@@ -230,7 +264,7 @@ def load_visual_words_dataset(
             for p in files:
                 all_records.append(
                     {
-                        "path": str(p),
+                        "path": portable_path(p),
                         "filename": p.name,
                         "class_name": cname,
                         "class_id": cid,
@@ -241,12 +275,19 @@ def load_visual_words_dataset(
         if not all_records:
             raise ValueError(f"No valid images found in {root}.")
 
-        # Check if stratified split is possible (at least 2 images per class)
+        # sklearn needs at least one image per class on both sides of the split.
         counts = np.bincount(all_labels, minlength=len(class_names))
+        n_total = len(all_records)
+        n_test = math.ceil(float(test_size) * n_total)
+        n_classes = len(class_names)
         if float(test_size) <= 0.0:
             train_records = list(all_records)
             test_records = []
-        elif np.all(counts >= 2) and len(all_records) >= 2 * len(class_names):
+        elif (
+            np.all(counts >= 2)
+            and n_test >= n_classes
+            and n_total - n_test >= n_classes
+        ):
             tr_rec, te_rec = train_test_split(
                 all_records,
                 test_size=float(test_size),
@@ -256,12 +297,14 @@ def load_visual_words_dataset(
             train_records = list(tr_rec)
             test_records = list(te_rec)
         else:
-            # Per-class manual split fallback for tiny synthetic datasets
+            # Per-class split for tiny datasets. A class with a single image goes
+            # to training only: putting it in both splits would leak it.
             for cname in class_names:
                 c_recs = [r for r in all_records if r["class_name"] == cname]
+                order = rng.permutation(len(c_recs))
+                c_recs = [c_recs[i] for i in order]
                 if len(c_recs) == 1:
                     train_records.extend(c_recs)
-                    test_records.extend(c_recs)
                 else:
                     n_te = max(1, int(round(len(c_recs) * float(test_size))))
                     n_tr = max(1, len(c_recs) - n_te)
@@ -272,7 +315,7 @@ def load_visual_words_dataset(
         raise ValueError("Training split contains no images.")
 
     return {
-        "dataset_dir": str(root),
+        "dataset_dir": portable_path(root),
         "split_mode": info["split_mode"],
         "class_names": class_names,
         "num_classes": len(class_names),
@@ -283,52 +326,65 @@ def load_visual_words_dataset(
     }
 
 
-def extract_local_descriptors_from_image(
+def prepare_gray_image(
     image: Image.Image,
     descriptor_config: dict[str, Any] | None = None,
-) -> tuple[np.ndarray, np.ndarray, Image.Image]:
-    """Extract local keypoints and float32 descriptors reusing ``extract_descriptors``.
+) -> Image.Image:
+    """Return the grayscale image descriptors are computed on.
 
-    Returns ``(keypoints, descriptors_float32, gray_pil_image)`` where ``keypoints``
-    has shape ``(N, 2)`` in ``(row, col)`` order and ``descriptors_float32`` has
-    shape ``(N, D)``.
+    Images smaller than the extractor's minimum side are upscaled so tiny
+    images still give descriptors.
     """
     cfg = default_descriptor_config(**(descriptor_config or {}))
-    method = cfg["method"]
-    max_kp = int(cfg["max_keypoints"])
-    gray_pil = image.convert("L") if cfg.get("grayscale", True) else image.copy()
-
-    min_dim = 32 if method == "ORB" else 12
+    gray_pil = image.convert("L")
+    min_dim = MIN_IMAGE_SIZE[cfg["method"]]
     if min(gray_pil.size) < min_dim:
         scale = min_dim / max(1, min(gray_pil.size))
         new_w = max(min_dim, int(round(gray_pil.width * scale)))
         new_h = max(min_dim, int(round(gray_pil.height * scale)))
         gray_pil = gray_pil.resize((new_w, new_h), Image.Resampling.BILINEAR)
+    return gray_pil
 
-    if method == "SIFT":
-        n_scales = int(cfg.get("n_scales", 3))
-        c_dog = float(cfg.get("contrast_threshold", 0.04)) / max(1, n_scales)
-        keypoints, descriptors, _ = extract_descriptors(
+
+def extract_local_descriptors_from_image(
+    image: Image.Image,
+    descriptor_config: dict[str, Any] | None = None,
+) -> tuple[np.ndarray, np.ndarray, Image.Image]:
+    """Extract local keypoints and float32 descriptors with ``detect_and_describe``.
+
+    Returns ``(keypoints, descriptors_float32, gray_pil_image)`` where ``keypoints``
+    has shape ``(N, 2)`` in ``(row, col)`` order and ``descriptors_float32`` has
+    shape ``(N, D)``. Descriptors are always computed on the grayscale image
+    (``grayscale`` is kept in the config only for older saved codebooks).
+    """
+    cfg = default_descriptor_config(**(descriptor_config or {}))
+    max_kp = int(cfg["max_keypoints"])
+    gray_pil = prepare_gray_image(image, cfg)
+
+    if cfg["method"] == "SIFT":
+        # scikit-image defines c_dog for 3 scales per octave and rescales it for
+        # other n_scales itself, so OpenCV's contrastThreshold maps to c / 3.
+        keypoints, descriptors = detect_and_describe(
             gray_pil,
-            method="SIFT",
-            n_octaves=int(cfg.get("n_octaves", 4)),
-            n_scales=n_scales,
-            sigma_min=float(cfg.get("sigma", 1.6)),
-            upsampling=int(cfg.get("upsampling", 1)),
-            c_dog=c_dog,
-            c_edge=float(cfg.get("edge_threshold", 10.0)),
+            "SIFT",
+            n_octaves=int(cfg["n_octaves"]),
+            n_scales=int(cfg["n_scales"]),
+            sigma_min=float(cfg["sigma"]),
+            upsampling=int(cfg["upsampling"]),
+            c_dog=float(cfg["contrast_threshold"]) / 3.0,
+            c_edge=float(cfg["edge_threshold"]),
             max_keypoints=max_kp,
         )
     else:
-        keypoints, descriptors, _ = extract_descriptors(
+        keypoints, descriptors = detect_and_describe(
             gray_pil,
-            method="ORB",
+            "ORB",
             n_keypoints=max_kp,
-            fast_threshold=float(cfg.get("fast_threshold", 0.08)),
+            fast_threshold=float(cfg["fast_threshold"]),
             max_keypoints=max_kp,
         )
 
-    return keypoints, np.asarray(descriptors, dtype=np.float32), gray_pil.convert("L")
+    return keypoints, np.asarray(descriptors, dtype=np.float32), gray_pil
 
 
 def _crop_keypoint_patch(
@@ -348,7 +404,7 @@ def _crop_keypoint_patch(
         pr - half : pr - half + patch_size, pc - half : pc - half + patch_size
     ]
     if patch.shape != (patch_size, patch_size):
-        pil_p = Image.fromarray(patch.astype(np.uint8), mode="L").resize(
+        pil_p = Image.fromarray(patch.astype(np.uint8)).resize(
             (patch_size, patch_size), Image.Resampling.BILINEAR
         )
         return np.asarray(pil_p, dtype=np.uint8)
@@ -420,8 +476,9 @@ def build_codebook(
     )
 
     feature_descriptors: list[np.ndarray] = []
-    descriptor_meta: list[tuple[int, float, float]] = []  # (train_idx, row, col)
-    gray_cache: dict[int, np.ndarray] = {}
+    # Per descriptor: which training image it came from and its keypoint.
+    source_image_parts: list[np.ndarray] = []
+    keypoint_parts: list[np.ndarray] = []
     sample_keypoint_previews: list[dict[str, Any]] = []
 
     per_image_counts: list[int] = []
@@ -432,15 +489,12 @@ def build_codebook(
     for idx, rec in enumerate(train_records):
         if progress_callback is not None and (idx % 5 == 0 or idx == total_train - 1):
             progress_callback(idx + 1, total_train, "Extracting descriptors")
-        img_path = Path(rec["path"])
-        if not img_path.exists():
-            per_image_counts.append(0)
-            image_descriptor_slices.append((running_offset, running_offset))
-            continue
+        img_path = resolve_record_path(rec["path"])
+        if not img_path.is_file():
+            raise ValueError(f"Training image not found: {img_path}")
         with Image.open(img_path) as img:
             kps, descs, gray_pil = extract_local_descriptors_from_image(img, cfg)
 
-        gray_arr = np.asarray(gray_pil, dtype=np.uint8)
         n_desc = len(descs)
         per_image_counts.append(n_desc)
         image_descriptor_slices.append((running_offset, running_offset + n_desc))
@@ -449,7 +503,7 @@ def build_codebook(
         if len(sample_keypoint_previews) < 10 and len(kps) > 0:
             sample_keypoint_previews.append(
                 {
-                    "gray_image": gray_arr,
+                    "gray_image": np.asarray(gray_pil, dtype=np.uint8),
                     "keypoints": kps[:120].copy(),
                     "class_name": rec.get("class_name", ""),
                     "filename": rec.get("filename", img_path.name),
@@ -458,9 +512,8 @@ def build_codebook(
 
         if n_desc > 0:
             feature_descriptors.append(descs)
-            gray_cache[idx] = gray_arr
-            for r_val, c_val in kps:
-                descriptor_meta.append((idx, float(r_val), float(c_val)))
+            source_image_parts.append(np.full(n_desc, idx, dtype=np.int64))
+            keypoint_parts.append(np.asarray(kps, dtype=np.float64))
 
     if not feature_descriptors:
         raise ValueError(
@@ -470,11 +523,13 @@ def build_codebook(
     if progress_callback is not None:
         progress_callback(total_train, total_train, "Clustering visual words")
 
-    # Stack descriptors matching Set 7.1 slide
-    descriptors = feature_descriptors[0]
-    for descriptor in feature_descriptors[1:]:
-        descriptors = np.vstack((descriptors, descriptor))
-    descriptors = np.asarray(descriptors, dtype=np.float32)
+    # Stack all training descriptors once (vstack in a loop copies quadratically).
+    descriptors = np.concatenate(feature_descriptors, axis=0).astype(
+        np.float32, copy=False
+    )
+    source_image = np.concatenate(source_image_parts)
+    source_keypoints = np.concatenate(keypoint_parts, axis=0)
+    del feature_descriptors, source_image_parts, keypoint_parts
 
     if len(descriptors) < k_clusters:
         k_clusters = max(1, len(descriptors))
@@ -513,39 +568,48 @@ def build_codebook(
                 labels[s_off:e_off], minlength=k_clusters
             )
 
-    # Extract representative visual-word patch closest to each centroid
-    visual_word_patches = np.zeros((k_clusters, patch_size, patch_size), dtype=np.uint8)
-    visual_word_sources: list[dict[str, Any]] = []
-
+    # Representative descriptor per word: the member closest to its centroid.
+    # Sorting by (label, distance) puts each cluster's closest member first.
+    own_dists = np.linalg.norm(descriptors - centroids[labels], axis=1)
+    order = np.lexsort((own_dists, labels))
+    first_of_label = np.searchsorted(labels[order], np.arange(k_clusters))
+    best_index = np.empty(k_clusters, dtype=np.int64)
+    best_dist = np.empty(k_clusters, dtype=np.float64)
     for w_idx in range(k_clusters):
-        member_indices = np.where(labels == w_idx)[0]
-        if len(member_indices) > 0:
-            member_descs = descriptors[member_indices]
-            dists = np.linalg.norm(member_descs - centroids[w_idx], axis=1)
-            best_local = int(member_indices[int(np.argmin(dists))])
-            best_dist = float(np.min(dists))
+        if cluster_counts[w_idx] > 0:
+            best_index[w_idx] = order[first_of_label[w_idx]]
+            best_dist[w_idx] = own_dists[best_index[w_idx]]
         else:
+            # Empty cluster: use the nearest descriptor overall.
             dists = np.linalg.norm(descriptors - centroids[w_idx], axis=1)
-            best_local = int(np.argmin(dists))
-            best_dist = float(np.min(dists))
+            best_index[w_idx] = int(np.argmin(dists))
+            best_dist[w_idx] = float(dists[best_index[w_idx]])
 
-        tr_idx, kp_r, kp_c = descriptor_meta[best_local]
-        src_gray = gray_cache[tr_idx]
-        visual_word_patches[w_idx] = _crop_keypoint_patch(
-            src_gray, kp_r, kp_c, patch_size=patch_size
-        )
+    # Crop the patches, opening each source image once.
+    visual_word_patches = np.zeros((k_clusters, patch_size, patch_size), dtype=np.uint8)
+    visual_word_sources: list[dict[str, Any]] = [{} for _ in range(k_clusters)]
+    words_by_image: dict[int, list[int]] = {}
+    for w_idx in range(k_clusters):
+        tr_idx = int(source_image[best_index[w_idx]])
+        words_by_image.setdefault(tr_idx, []).append(w_idx)
+    for tr_idx, word_list in words_by_image.items():
         src_rec = train_records[tr_idx]
-        visual_word_sources.append(
-            {
+        with Image.open(resolve_record_path(src_rec["path"])) as img:
+            src_gray = np.asarray(prepare_gray_image(img, cfg), dtype=np.uint8)
+        for w_idx in word_list:
+            kp_r, kp_c = (float(v) for v in source_keypoints[best_index[w_idx]])
+            visual_word_patches[w_idx] = _crop_keypoint_patch(
+                src_gray, kp_r, kp_c, patch_size=patch_size
+            )
+            visual_word_sources[w_idx] = {
                 "word_index": w_idx,
                 "train_record_index": tr_idx,
                 "filename": src_rec.get("filename", ""),
                 "class_name": src_rec.get("class_name", ""),
                 "keypoint_row": kp_r,
                 "keypoint_col": kp_c,
-                "distance_to_centroid": best_dist,
+                "distance_to_centroid": float(best_dist[w_idx]),
             }
-        )
 
     elapsed_s = time.perf_counter() - t0
     codebook_id = _compute_codebook_id(centroids, class_names, cfg)
@@ -571,7 +635,7 @@ def build_codebook(
         "patch_size": int(patch_size),
         "cluster_counts": [int(c) for c in cluster_counts.tolist()],
         "training_time_s": elapsed_s,
-        "dataset_dir": str(dataset_dir) if dataset_dir else "",
+        "dataset_dir": portable_path(dataset_dir) if dataset_dir else "",
         "descriptor_config": cfg,
         "visual_word_sources": visual_word_sources,
         "train_records": list(train_records),
@@ -600,7 +664,7 @@ def render_codebook_visualization(codebook_bundle: dict[str, Any]) -> Image.Imag
     previews: list[dict[str, Any]] = codebook_bundle.get("sample_previews", [])
 
     k_words = len(patches)
-    fig = plt.figure(figsize=(14.5, 9.2), dpi=100)
+    fig = Figure(figsize=(14.5, 9.2), dpi=100)
     fig.suptitle(
         f"Set 7.1 — Codebook Construction ({meta['clustering_algorithm']}, "
         f"K = {k_words} visual words, {meta['total_descriptors']:,} descriptors)",
@@ -696,7 +760,6 @@ def render_codebook_visualization(codebook_bundle: dict[str, Any]) -> Image.Imag
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -706,7 +769,7 @@ def save_codebook(
     output_dir: str | Path = DEFAULT_VISUAL_WORDS_MODEL_DIR,
 ) -> dict[str, Path]:
     """Persist codebook centres, visual word patches, metadata, and visual_words.png."""
-    out_dir = Path(output_dir)
+    out_dir = resolve_path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     codebook_path = out_dir / "codebook.npy"
@@ -728,7 +791,7 @@ def save_codebook(
         )
 
     meta = dict(codebook_bundle["metadata"])
-    meta["model_dir"] = str(out_dir)
+    meta["model_dir"] = portable_path(out_dir)
     with open(metadata_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2)
 
@@ -752,8 +815,13 @@ def save_codebook(
 def load_codebook(
     model_path_or_dir: str | Path = DEFAULT_VISUAL_WORDS_MODEL_DIR,
 ) -> dict[str, Any]:
-    """Load a persisted visual vocabulary codebook and its locked descriptor config."""
-    target = Path(model_path_or_dir)
+    """Load a persisted visual vocabulary codebook and its locked descriptor config.
+
+    The codebook ID is recomputed from ``codebook.npy``, the class names and the
+    descriptor configuration, so a codebook file that no longer matches its
+    metadata is rejected instead of silently pairing with stale histograms.
+    """
+    target = resolve_record_path(model_path_or_dir)
     if target.is_file():
         model_dir = target.parent
     else:
@@ -797,8 +865,18 @@ def load_codebook(
         else None
     )
 
+    computed_id = _compute_codebook_id(
+        codebook, list(metadata.get("class_names", [])), descriptor_config
+    )
+    stored_id = str(metadata.get("codebook_id", "")) or computed_id
+    if stored_id != computed_id:
+        raise ValueError(
+            f"Codebook in {model_dir} does not match its metadata "
+            f"(stored ID {stored_id}, computed {computed_id}). Rebuild the codebook."
+        )
+
     return {
-        "codebook_id": str(metadata.get("codebook_id", "")),
+        "codebook_id": computed_id,
         "model_dir": str(model_dir),
         "codebook": codebook,
         "visual_word_patches": patches,
@@ -819,6 +897,41 @@ def find_latest_codebook_dir() -> Path:
     return DEFAULT_VISUAL_WORDS_MODEL_DIR
 
 
+def build_and_save_codebook(
+    parameters: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Path]]:
+    """Load the dataset, build the codebook and save it (no Tkinter access).
+
+    Runs in a worker thread behind ``run_with_progress``.
+    """
+    random_state = int(parameters.get("random_state", 0))
+    dataset = load_visual_words_dataset(
+        parameters.get("dataset_dir", DEFAULT_DATASET_DIR),
+        test_size=float(parameters.get("test_size", 0.25)),
+        random_state=random_state,
+        max_images_per_class=parameters.get("max_images_per_class"),
+    )
+    bundle = build_codebook(
+        dataset["train_records"],
+        class_names=dataset["class_names"],
+        descriptor_config=parameters.get("descriptor_config"),
+        clusters_per_class=int(parameters.get("clusters_per_class", 10)),
+        n_clusters=parameters.get("n_clusters"),
+        clustering_algorithm=str(
+            parameters.get("clustering_algorithm", "MiniBatchKMeans")
+        ),
+        random_state=random_state,
+        batch_size=int(parameters.get("batch_size", 1024)),
+        max_iter=int(parameters.get("max_iter", 100)),
+        n_init=int(parameters.get("n_init", 3)),
+        test_records=dataset["test_records"],
+        dataset_dir=dataset["dataset_dir"],
+    )
+    output_dir = parameters.get("output_dir", DEFAULT_VISUAL_WORDS_MODEL_DIR)
+    saved_paths = save_codebook(bundle, output_dir=output_dir)
+    return bundle, saved_paths
+
+
 def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | None:
     """Display the Set 7.1 Codebook Construction configuration dialog."""
     dialog = tk.Toplevel(parent)
@@ -827,13 +940,8 @@ def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | No
     dialog.resizable(False, False)
     dialog.grab_set()
 
-    default_ds = (
-        str(DEFAULT_DATASET_DIR)
-        if DEFAULT_DATASET_DIR.exists()
-        else "datasets/Caltech_101_subset"
-    )
-    dataset_var = tk.StringVar(value=default_ds)
-    output_dir_var = tk.StringVar(value=str(DEFAULT_VISUAL_WORDS_MODEL_DIR))
+    dataset_var = tk.StringVar(value=portable_path(DEFAULT_DATASET_DIR))
+    output_dir_var = tk.StringVar(value=portable_path(DEFAULT_VISUAL_WORDS_MODEL_DIR))
     test_size_var = tk.DoubleVar(value=0.25)
     max_imgs_var = tk.IntVar(value=0)
 
@@ -843,7 +951,6 @@ def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | No
     contrast_var = tk.DoubleVar(value=0.04)
     edge_var = tk.DoubleVar(value=10.0)
     sigma_var = tk.DoubleVar(value=1.6)
-    grayscale_var = tk.BooleanVar(value=True)
 
     # K-Means config
     alg_var = tk.StringVar(value="MiniBatchKMeans")
@@ -970,9 +1077,6 @@ def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | No
     ttk.Spinbox(
         desc_frame, textvariable=sigma_var, from_=1.0, to=3.0, increment=0.1, width=8
     ).grid(row=2, column=1, sticky="w", padx=6, pady=3)
-    ttk.Checkbutton(
-        desc_frame, text="Grayscale conversion", variable=grayscale_var
-    ).grid(row=2, column=2, columnspan=2, sticky="w", padx=(10, 0), pady=3)
 
     # Section C: K-Means Clustering Configuration
     km_frame = ttk.LabelFrame(
@@ -1007,7 +1111,9 @@ def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | No
     ttk.Label(km_frame, text="Visual words (K):").grid(
         row=1, column=0, sticky="w", pady=3
     )
-    ttk.Label(km_frame, textvariable=computed_k_var, font=("Segoe UI", 9, "bold")).grid(
+    k_font = tkfont.nametofont("TkDefaultFont").copy()
+    k_font.configure(weight="bold")
+    ttk.Label(km_frame, textvariable=computed_k_var, font=k_font).grid(
         row=1, column=1, columnspan=3, sticky="w", padx=6, pady=3
     )
 
@@ -1069,7 +1175,7 @@ def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | No
             result = {
                 "dataset_dir": ds_dir,
                 "output_dir": output_dir_var.get().strip()
-                or str(DEFAULT_VISUAL_WORDS_MODEL_DIR),
+                or portable_path(DEFAULT_VISUAL_WORDS_MODEL_DIR),
                 "test_size": float(test_size_var.get()),
                 "max_images_per_class": int(max_imgs_var.get())
                 if int(max_imgs_var.get()) > 0
@@ -1080,7 +1186,6 @@ def ask_codebook_construction_parameters(parent: tk.Misc) -> dict[str, Any] | No
                     contrast_threshold=float(contrast_var.get()),
                     edge_threshold=float(edge_var.get()),
                     sigma=float(sigma_var.get()),
-                    grayscale=bool(grayscale_var.get()),
                 ),
                 "clustering_algorithm": alg_var.get(),
                 "clusters_per_class": max(1, int(clusters_per_class_var.get())),
@@ -1128,45 +1233,14 @@ class CodebookConstructionTool(ForensicsTool):
             if parameters is None:
                 return None
 
-        dataset_dir = parameters.get("dataset_dir", DEFAULT_DATASET_DIR)
-        test_size = float(parameters.get("test_size", 0.25))
-        random_state = int(parameters.get("random_state", 0))
-        max_imgs = parameters.get("max_images_per_class")
-
-        dataset = load_visual_words_dataset(
-            dataset_dir,
-            test_size=test_size,
-            random_state=random_state,
-            max_images_per_class=max_imgs,
+        bundle, saved_paths = run_with_progress(
+            parent,
+            "Codebook Construction",
+            "Extracting descriptors from the training images and clustering them "
+            "into visual words…",
+            build_and_save_codebook,
+            parameters,
         )
-
-        def _pump_ui(_cur: int, _tot: int, _stage: str) -> None:
-            if parent is not None and hasattr(parent, "update_idletasks"):
-                try:
-                    parent.update_idletasks()
-                except Exception:
-                    pass
-
-        bundle = build_codebook(
-            dataset["train_records"],
-            class_names=dataset["class_names"],
-            descriptor_config=parameters.get("descriptor_config"),
-            clusters_per_class=int(parameters.get("clusters_per_class", 10)),
-            n_clusters=parameters.get("n_clusters"),
-            clustering_algorithm=str(
-                parameters.get("clustering_algorithm", "MiniBatchKMeans")
-            ),
-            random_state=random_state,
-            batch_size=int(parameters.get("batch_size", 1024)),
-            max_iter=int(parameters.get("max_iter", 100)),
-            n_init=int(parameters.get("n_init", 3)),
-            test_records=dataset["test_records"],
-            dataset_dir=dataset["dataset_dir"],
-            progress_callback=_pump_ui,
-        )
-
-        output_dir = parameters.get("output_dir", DEFAULT_VISUAL_WORDS_MODEL_DIR)
-        saved_paths = save_codebook(bundle, output_dir=output_dir)
         meta = bundle["metadata"]
 
         details: dict[str, Any] = {
