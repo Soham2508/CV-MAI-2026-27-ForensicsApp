@@ -962,6 +962,11 @@ def train_knn_classifier(
     if len(X_train_pca) == 0:
         raise ValueError("PCA training embeddings are empty.")
 
+    # scikit-learn's ball_tree and kd_tree searches do not support the cosine
+    # metric and raise an error; brute force gives the same neighbours.
+    if metric.lower() == "cosine" and algorithm.lower() in ("ball_tree", "kd_tree"):
+        algorithm = "brute"
+
     t0 = time.perf_counter()
     base_knn = KNeighborsClassifier(
         n_neighbors=min(int(n_neighbors), len(X_train_pca)),

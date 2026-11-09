@@ -40,16 +40,21 @@ def preprocess_test_face(
     value_scale: str = "0_1",
     detect_and_crop: bool = False,
     detector_type: str = "YuNet",
+    status: dict[str, str] | None = None,
 ) -> tuple[np.ndarray, Image.Image]:
     """Convert test image to grayscale, optionally detect/crop, and resize to (h, w).
 
-    Returns ``(flattened_vector, resized_pil_gray_image)``.
+    Returns ``(flattened_vector, resized_pil_gray_image)``. When ``status`` is
+    given, ``status["crop"]`` records what happened to the optional face crop,
+    so a failed detection is reported instead of silently ignored.
     """
     working = image.copy()
+    crop_note = "Not requested"
     if detect_and_crop:
         try:
             det = create_face_detector(detector_type)
             faces = det.detect(working)
+            crop_note = "No face found; used the whole image"
             if faces:
                 x, y, w_box, h_box = faces[0]["bbox"]
                 x0 = max(0, int(x))
@@ -58,8 +63,13 @@ def preprocess_test_face(
                 y1 = min(working.height, int(y + h_box))
                 if x1 > x0 and y1 > y0:
                     working = working.crop((x0, y0, x1, y1))
-        except Exception:
-            pass
+                    crop_note = (
+                        f"Cropped to first face ({x0}, {y0}, {x1 - x0}, {y1 - y0})"
+                    )
+        except Exception as exc:
+            crop_note = f"Face detection failed ({exc}); used the whole image"
+    if status is not None:
+        status["crop"] = crop_note
 
     h, w = int(target_shape[0]), int(target_shape[1])
     gray = working.convert("L").resize((w, h), Image.Resampling.BILINEAR)
@@ -148,11 +158,13 @@ def recognise_face(
     h, w = pca_model["image_shape"]
     value_scale = pca_model.get("value_scale", "0_1")
 
+    crop_status: dict[str, str] = {}
     x_test, preprocessed_pil = preprocess_test_face(
         image,
         (h, w),
         value_scale=value_scale,
         detect_and_crop=detect_and_crop,
+        status=crop_status,
     )
 
     # Calculate test image's PCA coefficients: w_test = U_K^T (x_test - μ)
@@ -231,6 +243,7 @@ def recognise_face(
         "image_shape": (h, w),
         "n_components": int(pca_model["n_components"]),
         "processing_time_ms": elapsed_ms,
+        "crop_status": crop_status.get("crop", "Not requested"),
     }
     result_data["visualization_image"] = render_recognition_result(result_data)
     return result_data
@@ -567,6 +580,7 @@ class FaceRecognitionTool(ForensicsTool):
                 f"{prob:.2f} ({prob * 100:.1f}%)" if prob is not None else "1-NN"
             ),
             "PCA components": rec_out["n_components"],
+            "Face crop": rec_out["crop_status"],
             "Processing time": f"{rec_out['processing_time_ms']:.1f} ms",
         }
         for match in matches:

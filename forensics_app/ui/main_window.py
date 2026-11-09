@@ -351,7 +351,16 @@ class MainWindow:
             self.status.set(f"Cancelled {tool.title}.")
             return
         if result.image is not None:
-            self.document.apply(result.image)
+            try:
+                self.document.apply(result.image)
+            except Exception as error:  # never lose a finished result silently
+                messagebox.showerror(
+                    f"{tool.title}: could not show the result",
+                    str(error),
+                    parent=self.root,
+                )
+                self.status.set(f"Error showing the result of {tool.title}.")
+                return
         self._show_details(result.details)
         self.status.set(result.message)
         self._refresh()

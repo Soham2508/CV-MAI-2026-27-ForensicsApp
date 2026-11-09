@@ -9,6 +9,7 @@ static-image and live webcam face detection tools.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import os
 from pathlib import Path
 import time
 import tkinter as tk
@@ -27,10 +28,15 @@ from forensics_app.core import ImageDocument
 from .base import ForensicsTool, ToolResult
 from .viola_jones_trainer import (
     DEFAULT_CASCADE_XML,
+    FeatureType,
+    HaarLikeFeature,
     ViolaJonesCascadeModel,
     _normalize_patch,
     compute_integral_image,
 )
+
+YUNET_MIN_BYTES = 100_000
+DOWNLOAD_TIMEOUT_SEC = 60
 
 YUNET_MODEL_URL = (
     "https://huggingface.co/opencv/opencv_zoo/resolve/main/"
@@ -84,14 +90,32 @@ def ensure_yunet_model(model_path: str | Path | None = None) -> Path:
         ]
     )
     for cand in candidates:
-        if cand.exists() and cand.is_file() and cand.stat().st_size >= 100_000:
+        if cand.exists() and cand.is_file() and cand.stat().st_size >= YUNET_MIN_BYTES:
             return cand
 
     target = Path(model_path) if model_path else DEFAULT_YUNET_MODEL_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
-    urllib.request.urlretrieve(YUNET_MODEL_URL, str(target))
-    if not target.exists() or target.stat().st_size < 100_000:
-        raise RuntimeError("YuNet model download failed or the file is incomplete.")
+    # Download to a temporary file and only rename it into place once it is
+    # complete, so an interrupted download is never mistaken for the model.
+    partial = target.with_name(target.name + ".part")
+    try:
+        with urllib.request.urlopen(
+            YUNET_MODEL_URL, timeout=DOWNLOAD_TIMEOUT_SEC
+        ) as resp:
+            expected = resp.headers.get("Content-Length")
+            with open(partial, "wb") as out:
+                while chunk := resp.read(1 << 16):
+                    out.write(chunk)
+        size = partial.stat().st_size
+        if size < YUNET_MIN_BYTES or (expected and size != int(expected)):
+            raise RuntimeError("YuNet model download is incomplete.")
+        os.replace(partial, target)
+    except Exception as exc:
+        partial.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"Could not download the YuNet model ({exc}). Browse to a local "
+            "face_detection_yunet_2023mar.onnx file instead."
+        ) from exc
     return target
 
 
@@ -204,53 +228,122 @@ def _group_overlapping_boxes(
     min_neighbors: int = 3,
     iou_threshold: float = 0.3,
 ) -> list[tuple[int, int, int, int]]:
-    """Group nearby candidate windows and apply non-maximum suppression."""
+    """Group nearby candidate windows and apply non-maximum suppression.
+
+    Starting from the highest-scoring unused window, every unused window whose
+    IoU with it is at least ``iou_threshold`` joins its group. A group with at
+    least ``min_neighbors`` windows is reported as its average box; otherwise
+    only the seed window is discarded. IoU is computed for all windows at once.
+    """
     if not boxes:
         return []
     if min_neighbors <= 1 and len(boxes) == 1:
         return boxes
 
     arr = np.asarray(boxes, dtype=np.float64)
-    sc = np.asarray(scores, dtype=np.float64)
-    order = np.argsort(sc)[::-1]
+    order = np.argsort(np.asarray(scores, dtype=np.float64))[::-1]
+    x1, y1 = arr[:, 0], arr[:, 1]
+    x2, y2 = x1 + arr[:, 2], y1 + arr[:, 3]
+    area = arr[:, 2] * arr[:, 3]
 
     kept: list[tuple[int, int, int, int]] = []
     used = np.zeros(len(boxes), dtype=bool)
-
     for idx in order:
         if used[idx]:
             continue
-        x1, y1, w1, h1 = arr[idx]
-        cluster = [idx]
-        for other in order:
-            if other == idx or used[other]:
-                continue
-            x2, y2, w2, h2 = arr[other]
-            ix1 = max(x1, x2)
-            iy1 = max(y1, y2)
-            ix2 = min(x1 + w1, x2 + w2)
-            iy2 = min(y1 + h1, y2 + h2)
-            inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
-            union = w1 * h1 + w2 * h2 - inter
-            iou = inter / union if union > 0 else 0.0
-            if iou >= iou_threshold:
-                cluster.append(other)
-
+        inter_w = np.clip(np.minimum(x2[idx], x2) - np.maximum(x1[idx], x1), 0.0, None)
+        inter_h = np.clip(np.minimum(y2[idx], y2) - np.maximum(y1[idx], y1), 0.0, None)
+        inter = inter_w * inter_h
+        union = area[idx] + area - inter
+        iou = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+        members = (iou >= iou_threshold) & ~used
+        members[idx] = True
+        cluster = np.flatnonzero(members)
         if len(cluster) >= max(1, min_neighbors):
-            for c_idx in cluster:
-                used[c_idx] = True
-            mean_box = np.mean(arr[cluster], axis=0)
-            kept.append(
-                (
-                    int(round(mean_box[0])),
-                    int(round(mean_box[1])),
-                    int(round(mean_box[2])),
-                    int(round(mean_box[3])),
-                )
-            )
+            used[cluster] = True
+            mean_box = arr[cluster].mean(axis=0)
+            kept.append(tuple(int(round(v)) for v in mean_box))
         else:
             used[idx] = True
     return kept
+
+
+def _feature_rects(
+    clf: HaarLikeFeature,
+) -> list[tuple[int, int, int, int, int]]:
+    """Return a Haar feature's rectangles as (top, left, bottom, right, sign).
+
+    Matches ``HaarLikeFeature.get_score_batch`` exactly, so whole-image
+    evaluation gives the same scores as evaluating one window at a time.
+    """
+    r, c = clf.top_left
+    w, h = clf.width, clf.height
+    if clf.type == FeatureType.TWO_VERTICAL:
+        half = h // 2
+        return [(r, c, r + half, c + w, 1), (r + half, c, r + h, c + w, -1)]
+    if clf.type == FeatureType.TWO_HORIZONTAL:
+        half = w // 2
+        return [(r, c, r + h, c + half, 1), (r, c + half, r + h, c + w, -1)]
+    if clf.type == FeatureType.THREE_HORIZONTAL:
+        third = w // 3
+        return [
+            (r, c, r + h, c + third, 1),
+            (r, c + third, r + h, c + 2 * third, -1),
+            (r, c + 2 * third, r + h, c + w, 1),
+        ]
+    if clf.type == FeatureType.THREE_VERTICAL:
+        third = h // 3
+        return [
+            (r, c, r + third, c + w, 1),
+            (r + third, c, r + 2 * third, c + w, -1),
+            (r + 2 * third, c, r + h, c + w, 1),
+        ]
+    if clf.type == FeatureType.FOUR:
+        half_h, half_w = h // 2, w // 2
+        return [
+            (r, c, r + half_h, c + half_w, 1),
+            (r, c + half_w, r + half_h, c + w, -1),
+            (r + half_h, c, r + h, c + half_w, -1),
+            (r + half_h, c + half_w, r + h, c + w, 1),
+        ]
+    raise ValueError(f"Unsupported Haar feature type: {clf.type}")
+
+
+def _evaluate_cascade_windows(
+    model: ViolaJonesCascadeModel,
+    ii: np.ndarray,
+    rows: np.ndarray,
+    cols: np.ndarray,
+    threshold_offset: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Run every window whose top-left is (rows[i], cols[i]) through the cascade.
+
+    All windows still alive are scored together, stage by stage, so early
+    rejection is kept while Python overhead no longer grows with the window
+    count. Returns the indices of windows passing every stage and the summed
+    stage scores of all windows (same values as ``evaluate_window``).
+    """
+    alive = np.arange(len(rows))
+    total = np.zeros(len(rows), dtype=np.float64)
+    for stage in model.stages:
+        r_idx, c_idx = rows[alive], cols[alive]
+        stage_score = np.zeros(len(alive), dtype=np.float64)
+        for clf in stage.classifiers:
+            value = np.zeros(len(alive), dtype=np.float64)
+            for top, left, bottom, right, sign in _feature_rects(clf):
+                value += sign * (
+                    ii[r_idx + bottom, c_idx + right]
+                    - ii[r_idx + top, c_idx + right]
+                    - ii[r_idx + bottom, c_idx + left]
+                    + ii[r_idx + top, c_idx + left]
+                )
+            stage_score += clf.weight * clf.predict_from_score(value)
+        passed = stage_score >= stage.stage_threshold + threshold_offset
+        total[alive] += stage_score
+        alive = alive[passed]
+        if alive.size == 0:
+            break
+    return alive, total
 
 
 class ViolaJonesDetector(FaceDetector):
@@ -284,6 +377,10 @@ class ViolaJonesDetector(FaceDetector):
         self._cv2_cascade = None
         self._skimage_cascade = None
 
+        if chosen and not chosen.is_file():
+            raise FileNotFoundError(
+                f"Cascade file not found: {chosen}. Check the model path."
+            )
         if chosen and chosen.exists() and chosen.is_file():
             self.model_path = chosen
             # First check if it's our custom Viola-Jones XML cascade
@@ -330,7 +427,10 @@ class ViolaJonesDetector(FaceDetector):
 
     def configure(self, **params: Any) -> None:
         if "scale_factor" in params and params["scale_factor"] is not None:
-            self.scale_factor = max(1.02, float(params["scale_factor"]))
+            scale_factor = float(params["scale_factor"])
+            if not scale_factor > 1.0:
+                raise ValueError("Scale factor must be greater than 1.0.")
+            self.scale_factor = scale_factor
         if "min_neighbors" in params and params["min_neighbors"] is not None:
             self.min_neighbors = max(1, int(params["min_neighbors"]))
         if "min_size" in params and params["min_size"] is not None:
@@ -373,19 +473,22 @@ class ViolaJonesDetector(FaceDetector):
             ii_full = compute_integral_image(scaled_norm)
 
             step = max(2, min(win_w, win_h) // 4)
-            for r in range(0, scaled_h - win_h + 1, step):
-                for c in range(0, scaled_w - win_w + 1, step):
-                    sub_ii = ii_full[r : r + win_h + 1, c : c + win_w + 1]
-                    passed, score = model.evaluate_window(
-                        sub_ii, threshold_offset=self.threshold
-                    )
-                    if passed:
-                        orig_x = int(round(c * scale))
-                        orig_y = int(round(r * scale))
-                        candidate_boxes.append((orig_x, orig_y, cur_w, cur_h))
-                        candidate_scores.append(score)
+            grid_r, grid_c = np.meshgrid(
+                np.arange(0, scaled_h - win_h + 1, step),
+                np.arange(0, scaled_w - win_w + 1, step),
+                indexing="ij",
+            )
+            rows, cols = grid_r.ravel(), grid_c.ravel()
+            passed, scores = _evaluate_cascade_windows(
+                model, ii_full, rows, cols, threshold_offset=self.threshold
+            )
+            for i in passed:
+                orig_x = int(round(cols[i] * scale))
+                orig_y = int(round(rows[i] * scale))
+                candidate_boxes.append((orig_x, orig_y, cur_w, cur_h))
+                candidate_scores.append(float(scores[i]))
 
-            scale *= max(1.10, self.scale_factor)
+            scale *= self.scale_factor
 
         grouped = _group_overlapping_boxes(
             candidate_boxes,
@@ -754,7 +857,7 @@ def ask_face_detection_parameters(
     ttk.Spinbox(
         vj_frame,
         textvariable=scale_factor_var,
-        from_=1.05,
+        from_=1.01,
         to=2.0,
         increment=0.05,
         width=8,

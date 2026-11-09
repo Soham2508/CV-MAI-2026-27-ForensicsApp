@@ -171,14 +171,19 @@ def find_best_image_match(
         except (OSError, ValueError):
             continue
 
-        cand_kp, cand_desc = extract_descriptors(
-            cand_img,
-            method=method,
-            n_keypoints=n_keypoints,
-            n_octaves=n_octaves,
-            n_scales=n_scales,
-            sigma_min=sigma_min,
-        )
+        try:
+            cand_kp, cand_desc = extract_descriptors(
+                cand_img,
+                method=method,
+                n_keypoints=n_keypoints,
+                n_octaves=n_octaves,
+                n_scales=n_scales,
+                sigma_min=sigma_min,
+            )
+        except ValueError:
+            # e.g. an image smaller than the method's minimum size: skip it
+            # instead of aborting the whole search.
+            continue
 
         if len(cand_desc) == 0:
             continue

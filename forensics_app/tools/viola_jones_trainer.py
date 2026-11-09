@@ -103,12 +103,15 @@ def _normalize_patch(image_arr: np.ndarray) -> np.ndarray:
     Do not divide each patch by its own maximum: that makes the feature scale
     depend on a single bright pixel and can amplify noise in dark patches.
     """
-    arr = np.asarray(image_arr, dtype=np.float32)
+    source = np.asarray(image_arr)
+    arr = source.astype(np.float32)
     if arr.ndim != 2:
         raise ValueError("Expected a two-dimensional grayscale image.")
     if arr.size == 0:
         raise ValueError("Cannot normalise an empty image.")
-    if float(np.nanmax(arr)) > 1.0:
+    # Decide the scale from the data type, not the values: a very dark 8-bit
+    # frame whose brightest pixel is 1 must still be divided by 255.
+    if np.issubdtype(source.dtype, np.integer) or float(np.nanmax(arr)) > 1.0:
         arr = arr / 255.0
     return np.clip(arr, 0.0, 1.0)
 
@@ -682,7 +685,10 @@ class ViolaJonesCascadeModel:
         if not path.exists():
             raise FileNotFoundError(f"Cascade XML not found: {path}")
 
-        tree = ET.parse(path)
+        try:
+            tree = ET.parse(path)
+        except ET.ParseError as exc:
+            raise ValueError(f"{path.name} is not a valid XML file: {exc}") from exc
         root = tree.getroot()
         cascade_el = root.find("cascade")
         if cascade_el is None:

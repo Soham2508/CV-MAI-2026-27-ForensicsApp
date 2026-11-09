@@ -128,6 +128,13 @@ class WebcamDetectionController:
         self._latest_fps: float = 0.0
         self._latest_proc_ms: float = 0.0
         self._captured_result: ToolResult | None = None
+        # Tkinter is not thread-safe: the capture thread never touches Tk
+        # objects. The UI loop (main thread) copies the overlay options here,
+        # and the worker reports errors and new frames through these fields.
+        self._overlay: dict[str, bool] = {}
+        self._worker_error: str | None = None
+        self._frame_seq = 0
+        self._shown_seq = -1
         self._preview_photo: ImageTk.PhotoImage | None = None
         self._after_id: str | None = None
 
@@ -262,7 +269,7 @@ class WebcamDetectionController:
         ttk.Spinbox(
             self.vj_frame,
             textvariable=self.scale_factor_var,
-            from_=1.05,
+            from_=1.01,
             to=2.0,
             increment=0.05,
             width=7,
@@ -435,6 +442,9 @@ class WebcamDetectionController:
         cam_idx = int(self.camera_var.get())
         width, height = parse_resolution(self.resolution_var.get())
 
+        self._sync_overlay_options()
+        with self._lock:
+            self._worker_error = None
         self._stop_event.clear()
         self._running = True
         self.btn_start.configure(state="disabled")
@@ -449,23 +459,27 @@ class WebcamDetectionController:
         self._worker_thread.start()
         self._schedule_ui_update()
 
+    def _sync_overlay_options(self) -> None:
+        """Copy Tk overlay settings into plain values (main thread only)."""
+        is_yn = self.detector_var.get() == "YuNet"
+        options = {
+            "show_boxes": bool(self.show_boxes_var.get()),
+            "show_landmarks": bool(self.show_landmarks_var.get()) and is_yn,
+            "show_confidence": bool(self.show_conf_var.get()) and is_yn,
+            "show_fps": bool(self.show_fps_var.get()),
+        }
+        with self._lock:
+            self._overlay = options
+
     def _capture_loop(
         self, detector: FaceDetector, cam_idx: int, width: int, height: int
     ) -> None:
+        """Worker thread: read, detect and annotate frames. Never touches Tk."""
         cap = cv2.VideoCapture(cam_idx)
         if not cap.isOpened():
+            with self._lock:
+                self._worker_error = f"Could not open webcam device {cam_idx}."
             self._running = False
-            self.dialog.after(
-                0,
-                lambda: self.status_var.set(f"Could not open webcam device {cam_idx}."),
-            )
-            self.dialog.after(
-                0,
-                lambda: (
-                    self.btn_start.configure(state="normal"),
-                    self.btn_stop.configure(state="disabled"),
-                ),
-            )
             return
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
@@ -489,22 +503,19 @@ class WebcamDetectionController:
                     inst_fps if fps_ema == 0.0 else (0.8 * fps_ema + 0.2 * inst_fps)
                 )
 
-                is_yn = self.detector_var.get() == "YuNet"
-                out = process_webcam_frame(
-                    frame_bgr,
-                    detector,
-                    show_boxes=bool(self.show_boxes_var.get()),
-                    show_landmarks=bool(self.show_landmarks_var.get()) and is_yn,
-                    show_confidence=bool(self.show_conf_var.get()) and is_yn,
-                    show_fps=bool(self.show_fps_var.get()),
-                    fps=fps_ema,
-                )
+                with self._lock:
+                    options = dict(self._overlay)
+                out = process_webcam_frame(frame_bgr, detector, fps=fps_ema, **options)
 
                 with self._lock:
                     self._latest_frame = out["annotated_image"]
                     self._latest_detections = out["detections"]
                     self._latest_fps = fps_ema
                     self._latest_proc_ms = out["processing_time_ms"]
+                    self._frame_seq += 1
+        except Exception as exc:  # e.g. a detector error on one frame
+            with self._lock:
+                self._worker_error = f"Webcam detection stopped: {exc}"
         finally:
             cap.release()
             self._running = False
@@ -513,12 +524,23 @@ class WebcamDetectionController:
         if not self.dialog.winfo_exists():
             return
 
+        self._sync_overlay_options()
         with self._lock:
             frame = self._latest_frame
             detections = list(self._latest_detections)
             fps = self._latest_fps
+            seq = self._frame_seq
+            error = self._worker_error
+            self._worker_error = None
 
-        if frame is not None:
+        if error is not None:
+            self.status_var.set(error)
+            self.btn_start.configure(state="normal")
+            self.btn_stop.configure(state="disabled")
+
+        # Redraw only when the worker has produced a new frame.
+        if frame is not None and seq != self._shown_seq:
+            self._shown_seq = seq
             # Render in central application canvas
             if self.central_view is not None:
                 self.central_view.show(frame)
@@ -537,7 +559,9 @@ class WebcamDetectionController:
                 f"Detection running | FPS: {fps:.1f} | Faces: {len(detections)}"
             )
 
-        if self._running:
+        worker = self._worker_thread
+        worker_alive = worker is not None and worker.is_alive()
+        if self._running or worker_alive:
             self._after_id = self.dialog.after(33, self._schedule_ui_update)
 
     def stop_webcam(self) -> None:
