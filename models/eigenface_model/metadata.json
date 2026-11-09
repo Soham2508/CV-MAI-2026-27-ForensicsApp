@@ -1,0 +1,24 @@
+{
+  "model_id": "dca1c17682188321",
+  "n_components": 100,
+  "svd_solver": "randomized",
+  "whiten": true,
+  "image_shape": [
+    50,
+    37
+  ],
+  "value_scale": "0_1",
+  "target_names": [
+    "Ariel Sharon",
+    "Colin Powell",
+    "Donald Rumsfeld",
+    "George W Bush",
+    "Gerhard Schroeder",
+    "Hugo Chavez",
+    "Tony Blair"
+  ],
+  "n_classes": 7,
+  "n_train_samples": 966,
+  "n_test_samples": 322,
+  "total_explained_variance": 0.9154521822929382
+}

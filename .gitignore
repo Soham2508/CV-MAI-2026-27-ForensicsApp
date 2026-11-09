@@ -9,5 +9,5 @@ build/
 dist/
 *.egg-info/
 outputs/
-models/
+
 datasets/

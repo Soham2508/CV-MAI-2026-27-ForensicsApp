@@ -1,0 +1,244 @@
+<?xml version='1.0' encoding='utf-8'?>
+<opencv_storage>
+  <cascade type_id="forensics-viola-jones-cascade">
+    <stageType>BOOST</stageType>
+    <featureType>HAAR</featureType>
+    <boostType>GAB</boostType>
+    <featureMode>BASIC</featureMode>
+    <height>24</height>
+    <width>24</width>
+    <stageNum>5</stageNum>
+    <stages>
+      <_ index="0" hit_rate="1.000000" false_alarm_rate="0.100000">
+        <maxWeakCount>5</maxWeakCount>
+        <stageThreshold>0.00000000</stageThreshold>
+        <weakClassifiers>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>11 14</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>0.69314718</weight>
+          </_>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>1 8</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>0.68343814</weight>
+          </_>
+          <_>
+            <type>TWO_HORIZONTAL</type>
+            <topLeft>6 5</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>0.73720081</weight>
+          </_>
+          <_>
+            <type>THREE_VERTICAL</type>
+            <topLeft>3 9</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>0.78279764</weight>
+          </_>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>13 7</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>0.63751054</weight>
+          </_>
+        </weakClassifiers>
+      </_>
+      <_ index="1" hit_rate="1.000000" false_alarm_rate="0.000000">
+        <maxWeakCount>5</maxWeakCount>
+        <stageThreshold>0.00000000</stageThreshold>
+        <weakClassifiers>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>14 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.83178082</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>12 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.81879308</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>13 1</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.95266701</weight>
+          </_>
+          <_>
+            <type>TWO_HORIZONTAL</type>
+            <topLeft>8 14</topLeft>
+            <size>8 9</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.14864270</weight>
+          </_>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>6 7</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.02849439</weight>
+          </_>
+        </weakClassifiers>
+      </_>
+      <_ index="2" hit_rate="1.000000" false_alarm_rate="0.000000">
+        <maxWeakCount>5</maxWeakCount>
+        <stageThreshold>0.00000000</stageThreshold>
+        <weakClassifiers>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>14 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.83178082</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>12 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.81879308</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>13 1</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.95266701</weight>
+          </_>
+          <_>
+            <type>TWO_HORIZONTAL</type>
+            <topLeft>8 14</topLeft>
+            <size>8 9</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.14864270</weight>
+          </_>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>6 7</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.02849439</weight>
+          </_>
+        </weakClassifiers>
+      </_>
+      <_ index="3" hit_rate="1.000000" false_alarm_rate="0.000000">
+        <maxWeakCount>5</maxWeakCount>
+        <stageThreshold>0.00000000</stageThreshold>
+        <weakClassifiers>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>14 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.83178082</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>12 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.81879308</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>13 1</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.95266701</weight>
+          </_>
+          <_>
+            <type>TWO_HORIZONTAL</type>
+            <topLeft>8 14</topLeft>
+            <size>8 9</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.14864270</weight>
+          </_>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>6 7</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.02849439</weight>
+          </_>
+        </weakClassifiers>
+      </_>
+      <_ index="4" hit_rate="1.000000" false_alarm_rate="0.000000">
+        <maxWeakCount>5</maxWeakCount>
+        <stageThreshold>0.00000000</stageThreshold>
+        <weakClassifiers>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>14 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.83178082</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>12 12</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.81879308</weight>
+          </_>
+          <_>
+            <type>FOUR</type>
+            <topLeft>13 1</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>1.95266701</weight>
+          </_>
+          <_>
+            <type>TWO_HORIZONTAL</type>
+            <topLeft>8 14</topLeft>
+            <size>8 9</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.14864270</weight>
+          </_>
+          <_>
+            <type>TWO_VERTICAL</type>
+            <topLeft>6 7</topLeft>
+            <size>8 8</size>
+            <threshold>0.00000000</threshold>
+            <polarity>1</polarity>
+            <weight>2.02849439</weight>
+          </_>
+        </weakClassifiers>
+      </_>
+    </stages>
+  </cascade>
+</opencv_storage>

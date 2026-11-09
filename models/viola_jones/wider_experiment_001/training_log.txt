@@ -1,0 +1,14 @@
+[Dataset] 12880 positive files, 2500 negative files, 63103 annotated faces; window=24x24.
+[Samples] Prepared 500 positive and 1000 negative patches.
+[Stage 1/5] weak=10, hit=0.990, false_alarm=0.431, positives 500->495, negatives 1000->431, time=4.50s.
+[Stage 2] WARNING: false-alarm target 0.500 not reached; best observed 0.687 with 10 weak learner(s).
+[Stage 2/5] weak=10, hit=0.992, false_alarm=0.687, positives 495->491, negatives 431->296, time=2.26s.
+[Stage 3] WARNING: false-alarm target 0.500 not reached; best observed 0.838 with 9 weak learner(s).
+[Stage 3/5] weak=9, hit=0.992, false_alarm=0.838, positives 491->487, negatives 296->248, time=1.77s.
+[Stage 4] WARNING: false-alarm target 0.500 not reached; best observed 0.891 with 10 weak learner(s).
+[Stage 4/5] weak=10, hit=0.992, false_alarm=0.891, positives 487->483, negatives 248->221, time=1.66s.
+[Stage 5] WARNING: false-alarm target 0.500 not reached; best observed 0.801 with 10 weak learner(s).
+[Stage 5/5] weak=10, hit=0.992, false_alarm=0.801, positives 483->479, negatives 221->177, time=1.82s.
+[Evaluation] Train face recall=95.8%, train non-face recall=82.3%, train accuracy=86.8%.
+[Validation] Face recall=89.4%, non-face recall=78.0%, accuracy=83.2%.
+[Export] Saved custom cascade XML: models\viola_jones\wider_experiment_001\cascade.xml

@@ -1,0 +1,9 @@
+[Step 1] Validated dataset: 2429 pos files, 8555 neg files, window=24x24
+[Env] External OpenCV 3.4 binaries: createsamples=False, traincascade=False (using built-in Haar+AdaBoost engine)
+[Step 2] Generated 20 positive and 20 negative integral images.
+[Stage 1/5] weak_classifiers=5, hit_rate=1.000, false_alarm=0.100, time=0.48s
+[Stage 2/5] weak_classifiers=5, hit_rate=1.000, false_alarm=0.000, time=0.26s
+[Stage 3/5] weak_classifiers=5, hit_rate=1.000, false_alarm=0.000, time=0.26s
+[Stage 4/5] weak_classifiers=5, hit_rate=1.000, false_alarm=0.000, time=0.30s
+[Stage 5/5] weak_classifiers=5, hit_rate=1.000, false_alarm=0.000, time=0.26s
+[Step 5] Exported cascade XML to models\viola_jones\cascade.xml in 4.07s. Train Faces Acc: 100.0%, Train Non-Faces Acc: 50.0%
