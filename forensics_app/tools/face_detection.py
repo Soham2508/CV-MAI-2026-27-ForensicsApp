@@ -28,6 +28,7 @@ from .base import ForensicsTool, ToolResult
 from .viola_jones_trainer import (
     DEFAULT_CASCADE_XML,
     ViolaJonesCascadeModel,
+    _normalize_patch,
     compute_integral_image,
 )
 
@@ -247,6 +248,8 @@ def _group_overlapping_boxes(
                     int(round(mean_box[3])),
                 )
             )
+        else:
+            used[idx] = True
     return kept
 
 
@@ -366,19 +369,15 @@ class ViolaJonesDetector(FaceDetector):
                 gray, (scaled_w, scaled_h), interpolation=cv2.INTER_AREA
             )
 
-            step = max(2, min(win_w, win_h) // 3)
+            scaled_norm = _normalize_patch(resized)
+            ii_full = compute_integral_image(scaled_norm)
+
+            step = max(2, min(win_w, win_h) // 4)
             for r in range(0, scaled_h - win_h + 1, step):
                 for c in range(0, scaled_w - win_w + 1, step):
-                    patch = resized[r : r + win_h, c : c + win_w].astype(np.float64)
-                    pmax = float(np.max(patch))
-                    if pmax > 0:
-                        patch = patch / pmax
-                    ii = compute_integral_image(patch)
-                    iimax = float(np.max(ii))
-                    if iimax > 0:
-                        ii = ii / iimax
+                    sub_ii = ii_full[r : r + win_h + 1, c : c + win_w + 1]
                     passed, score = model.evaluate_window(
-                        ii, threshold_offset=self.threshold
+                        sub_ii, threshold_offset=self.threshold
                     )
                     if passed:
                         orig_x = int(round(c * scale))
@@ -386,7 +385,7 @@ class ViolaJonesDetector(FaceDetector):
                         candidate_boxes.append((orig_x, orig_y, cur_w, cur_h))
                         candidate_scores.append(score)
 
-            scale *= max(1.15, self.scale_factor)
+            scale *= max(1.10, self.scale_factor)
 
         grouped = _group_overlapping_boxes(
             candidate_boxes,
@@ -596,7 +595,17 @@ def ask_face_detection_parameters(
         value="Viola–Jones" if "viola" in initial_detector.lower() else "YuNet"
     )
     yunet_default = str(DEFAULT_YUNET_MODEL_PATH)
-    vj_default = str(DEFAULT_CASCADE_XML) if DEFAULT_CASCADE_XML.exists() else ""
+    vj_candidates = (
+        list(Path("models/viola_jones").glob("**/cascade.xml"))
+        if Path("models/viola_jones").exists()
+        else []
+    )
+    if vj_candidates:
+        vj_default = str(max(vj_candidates, key=lambda p: p.stat().st_mtime))
+    elif DEFAULT_CASCADE_XML.exists():
+        vj_default = str(DEFAULT_CASCADE_XML)
+    else:
+        vj_default = ""
     model_path_var = tk.StringVar(
         value=yunet_default if detector_var.get() == "YuNet" else vj_default
     )
