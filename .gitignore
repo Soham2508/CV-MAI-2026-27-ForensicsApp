@@ -11,3 +11,7 @@ dist/
 outputs/
 
 datasets/
+
+# Face crops written by the Eigenface trainer
+models/eigenface_model/train_images/
+models/eigenface_model/test_images/
