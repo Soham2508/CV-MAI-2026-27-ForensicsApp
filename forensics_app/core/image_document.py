@@ -51,7 +51,11 @@ class ImageDocument:
 
     def apply(self, image: Image.Image) -> None:
         if self.current is None:
-            raise RuntimeError("Load an image before applying a result.")
+            self.original = image.copy()
+            self.current = image.copy()
+            self._undo.clear()
+            self._redo.clear()
+            return
         self._undo.append(self.current.copy())
         self.current = image.copy()
         self._redo.clear()

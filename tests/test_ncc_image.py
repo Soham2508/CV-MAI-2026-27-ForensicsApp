@@ -98,7 +98,9 @@ class NormalizedCrossCorrelationThresholdTests(unittest.TestCase):
 
         for mode in ("red", "transparent_red", "dimmed", "contours"):
             with self.subTest(mode=mode):
-                output = superimpose_matches(image, correlation, threshold=0.8, mode=mode)
+                output = superimpose_matches(
+                    image, correlation, threshold=0.8, mode=mode
+                )
                 self.assertEqual(output.size, (10, 10))
                 self.assertEqual(output.mode, "RGB")
 

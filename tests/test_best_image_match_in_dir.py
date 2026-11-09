@@ -27,9 +27,7 @@ class BestImageMatchInDirTests(unittest.TestCase):
 
     def test_tool_registered_in_registry(self) -> None:
         registry = build_tool_registry()
-        tools = [
-            t for t in registry.all() if isinstance(t, BestImageMatchInDirTool)
-        ]
+        tools = [t for t in registry.all() if isinstance(t, BestImageMatchInDirTool)]
         self.assertEqual(len(tools), 1)
         tool = tools[0]
         self.assertEqual(tool.tool_id, "best_image_match_in_dir")
