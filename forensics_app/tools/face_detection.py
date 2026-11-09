@@ -647,7 +647,7 @@ def draw_face_detections(
         )
 
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
-    return Image.fromarray(rgb, mode="RGB")
+    return Image.fromarray(rgb)
 
 
 def detect_faces_in_image(

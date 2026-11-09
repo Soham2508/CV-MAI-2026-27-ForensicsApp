@@ -23,7 +23,7 @@ class BestImageMatchInDirTests(unittest.TestCase):
         """Create a uniquely textured RGB image with high-contrast distinct features."""
         rng = np.random.default_rng(seed)
         arr = rng.integers(0, 256, (*size, 3), dtype=np.uint8)
-        return Image.fromarray(arr, mode="RGB")
+        return Image.fromarray(arr)
 
     def test_tool_registered_in_registry(self) -> None:
         registry = build_tool_registry()

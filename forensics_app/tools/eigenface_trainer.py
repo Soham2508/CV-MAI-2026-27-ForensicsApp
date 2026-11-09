@@ -139,7 +139,7 @@ def save_split_dataset_to_folder(
         fname = f"train_{idx:04d}_{safe_name}.png"
         fpath = train_dir / fname
         img_u8 = _uint8_from_face_array(vec.reshape((h, w)))
-        Image.fromarray(img_u8, mode="L").save(fpath)
+        Image.fromarray(img_u8).save(fpath)
         train_records.append(
             {
                 "index": idx,
@@ -159,7 +159,7 @@ def save_split_dataset_to_folder(
         fname = f"test_{idx:04d}_{safe_name}.png"
         fpath = test_dir / fname
         img_u8 = _uint8_from_face_array(vec.reshape((h, w)))
-        Image.fromarray(img_u8, mode="L").save(fpath)
+        Image.fromarray(img_u8).save(fpath)
         test_records.append(
             {
                 "index": idx,
@@ -706,7 +706,7 @@ def save_eigenface_model(
         fname = f"train_{idx:04d}_{safe_name}.png"
         fpath = train_imgs_dir / fname
         img_u8 = _uint8_from_face_array(vec.reshape((h, w)))
-        Image.fromarray(img_u8, mode="L").save(fpath)
+        Image.fromarray(img_u8).save(fpath)
         saved_train_records.append(
             {
                 "index": idx,
@@ -727,7 +727,7 @@ def save_eigenface_model(
         fname = f"test_{idx:04d}_{safe_name}.png"
         fpath = test_imgs_dir / fname
         img_u8 = _uint8_from_face_array(vec.reshape((h, w)))
-        Image.fromarray(img_u8, mode="L").save(fpath)
+        Image.fromarray(img_u8).save(fpath)
         saved_test_records.append(
             {
                 "index": idx,

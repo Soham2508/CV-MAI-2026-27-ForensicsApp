@@ -35,7 +35,7 @@ class HOGVisualizationTests(unittest.TestCase):
     ) -> None:
         pixels = np.zeros((32, 32, 3), dtype=np.uint8)
         pixels[:, 16:, :] = 255
-        image = Image.fromarray(pixels, mode="RGB")
+        image = Image.fromarray(pixels)
 
         descriptor, output = hog_visualization(
             image,

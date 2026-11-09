@@ -369,7 +369,7 @@ class FaceAnalysisTests(unittest.TestCase):
                 noisy = np.clip(
                     base_pattern + rng.normal(50.0, 8.0, (h, w)), 0, 255
                 ).astype(np.uint8)
-                Image.fromarray(noisy, mode="L").save(
+                Image.fromarray(noisy).save(
                     pdir / f"{name}_{sample_idx:02d}.png"
                 )
         return root

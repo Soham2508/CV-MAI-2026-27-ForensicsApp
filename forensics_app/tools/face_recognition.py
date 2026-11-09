@@ -141,7 +141,7 @@ def _load_training_match_image(
         u8 = np.clip((recon_2d - vmin) / (vmax - vmin) * 255.0, 0, 255).astype(np.uint8)
     else:
         u8 = np.zeros((h, w), dtype=np.uint8)
-    return Image.fromarray(u8, mode="L")
+    return Image.fromarray(u8)
 
 
 def recognise_face(

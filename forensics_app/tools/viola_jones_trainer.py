@@ -1126,7 +1126,7 @@ def create_synthetic_face_nonface_dataset(
             np.uint8
         )
         target_dir = pos_train if i < int(n_pos * 0.75) else pos_test
-        Image.fromarray(noisy, mode="L").save(target_dir / f"face_{i:03d}.png")
+        Image.fromarray(noisy).save(target_dir / f"face_{i:03d}.png")
 
     camera_arr = skimage_data.camera()
     w, h = window_size
@@ -1135,7 +1135,7 @@ def create_synthetic_face_nonface_dataset(
         c = int(rng.integers(0, camera_arr.shape[1] - w))
         patch = camera_arr[r : r + h, c : c + w]
         target_dir = neg_train if i < int(n_neg * 0.75) else neg_test
-        Image.fromarray(patch, mode="L").save(target_dir / f"non_face_{i:03d}.png")
+        Image.fromarray(patch).save(target_dir / f"non_face_{i:03d}.png")
 
     return {
         "pos_train": pos_train,

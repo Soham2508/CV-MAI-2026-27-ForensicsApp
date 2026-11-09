@@ -151,7 +151,7 @@ def superimpose_matches(
     else:
         rgb[visible_mask] = color
 
-    return Image.fromarray(rgb, mode="RGB")
+    return Image.fromarray(rgb)
 
 
 def plot_template_matching(

@@ -38,7 +38,7 @@ def to_display_depth(image: Image.Image) -> Image.Image:
     else:
         scaled = np.zeros_like(values)
     scaled = np.nan_to_num(scaled, nan=0.0, posinf=255.0, neginf=0.0)
-    return Image.fromarray(np.clip(np.rint(scaled), 0, 255).astype(np.uint8), mode="L")
+    return Image.fromarray(np.clip(np.rint(scaled), 0, 255).astype(np.uint8))
 
 
 class ImageDocument:
