@@ -18,18 +18,23 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 import xml.etree.ElementTree as ET
 
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle
 import numpy as np
 from PIL import Image
 from skimage import data as skimage_data
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import DATASETS_DIR, MODELS_DIR, resolve_path
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".pgm"}
-DEFAULT_CASCADE_DIR = Path("models/viola_jones")
+DEFAULT_CASCADE_DIR = MODELS_DIR / "viola_jones"
 DEFAULT_CASCADE_XML = DEFAULT_CASCADE_DIR / "cascade.xml"
+# Feature columns processed at a time when searching for AdaBoost stumps.
+LEARN_FEATURE_CHUNK = 2048
 
 
 def enum(**enums: Any) -> type:
@@ -135,7 +140,7 @@ def load_integral_images(
     a sample limit does not systematically select the alphabetically first
     images.
     """
-    folder = Path(path)
+    folder = resolve_path(path)
     if not folder.exists() or not folder.is_dir():
         raise ValueError(f"Image directory does not exist: {folder}")
 
@@ -320,8 +325,12 @@ def _create_features(
     min_fh = max(2, int(min_feature_height))
     max_fw = min(int(max_feature_width), img_width)
     max_fh = min(int(max_feature_height), img_height)
-    candidates: list[HaarLikeFeature] = []
 
+    # Enumerate (type, width, height) groups in the same nested order as a
+    # full listing; each group has one feature per top-left position, row by
+    # row. Only the sampled indices are turned into objects, so the defaults
+    # build 3,000 features instead of all ~48,000 candidates.
+    groups: list[tuple[tuple[int, int], int, int, int]] = []
     for ftype in active_types:
         unit_w, unit_h = ftype
         for width in range(min_fw, max_fw + 1):
@@ -330,21 +339,33 @@ def _create_features(
             for height in range(min_fh, max_fh + 1):
                 if height % unit_h:
                     continue
-                for row in range(0, img_height - height + 1):
-                    for col in range(0, img_width - width + 1):
-                        candidates.append(
-                            HaarLikeFeature(ftype, (row, col), width, height, 0.0, 1)
-                        )
-    if not candidates:
+                n_rows = img_height - height + 1
+                n_cols = img_width - width + 1
+                if n_rows > 0 and n_cols > 0:
+                    groups.append((ftype, width, height, n_cols))
+    counts = np.asarray(
+        [(img_height - h + 1) * n_cols for _, _, h, n_cols in groups], dtype=np.int64
+    )
+    total = int(counts.sum()) if len(counts) else 0
+    if total == 0:
         raise ValueError(
             "No Haar features fit the training window. Increase feature bounds "
             "or use a larger window."
         )
-    if max_features > 0 and len(candidates) > max_features:
+    if max_features > 0 and total > max_features:
         rng = np.random.default_rng(random_seed)
-        selected = rng.choice(len(candidates), size=max_features, replace=False)
-        candidates = [candidates[int(i)] for i in selected]
-    return candidates
+        selected = rng.choice(total, size=max_features, replace=False)
+    else:
+        selected = np.arange(total)
+
+    offsets = np.concatenate([[0], np.cumsum(counts)])
+    group_of = np.searchsorted(offsets, selected, side="right") - 1
+    features: list[HaarLikeFeature] = []
+    for index, group in zip(selected, group_of):
+        ftype, width, height, n_cols = groups[int(group)]
+        row, col = divmod(int(index - offsets[group]), n_cols)
+        features.append(HaarLikeFeature(ftype, (row, col), width, height, 0.0, 1))
+    return features
 
 
 def learn(
@@ -409,10 +430,25 @@ def learn(
     # Feature order is reusable across boosting iterations.
     order = np.argsort(scores, axis=0, kind="mergesort")
     sorted_scores = np.take_along_axis(scores, order, axis=0)
-    sorted_labels = labels[order]
     learners: list[HaarLikeFeature] = []
     unavailable = np.zeros(len(features), dtype=bool)
     eps = 1e-10
+    n_features = len(features)
+    # Error tables are (samples + 1) x features float64 arrays; building them
+    # for all features at once needs several GB at 50,000 features. Columns
+    # are independent, so they are processed in chunks with the same result.
+    # Each chunk's sample order, sorted labels and valid split points never
+    # change between boosting rounds, so they are prepared once, contiguously.
+    chunks: list[tuple[int, np.ndarray, np.ndarray, np.ndarray]] = []
+    for start in range(0, n_features, LEARN_FEATURE_CHUNK):
+        cols = slice(start, min(start + LEARN_FEATURE_CHUNK, n_features))
+        order_c = np.ascontiguousarray(order[:, cols])
+        sorted_c = sorted_scores[:, cols]
+        invalid_c = np.zeros((labels.size + 1, order_c.shape[1]), dtype=bool)
+        if labels.size > 1:
+            invalid_c[1:-1, :] = ~(sorted_c[:-1, :] < sorted_c[1:, :])
+        chunks.append((start, order_c, labels[order_c], invalid_c))
+    del order
 
     for _ in range(n_learners):
         active_weights = weights.copy()
@@ -430,34 +466,44 @@ def learn(
                     keep[class_idx[np.argmax(active_weights[class_idx])]] = True
             active_weights *= keep
         active_weights /= max(active_weights.sum(), eps)
-        sw = active_weights[order]
-        pos_w = np.where(sorted_labels == 1, sw, 0.0)
-        neg_w = np.where(sorted_labels == -1, sw, 0.0)
-        cp = np.vstack([np.zeros((1, len(features))), np.cumsum(pos_w, axis=0)])
-        cn = np.vstack([np.zeros((1, len(features))), np.cumsum(neg_w, axis=0)])
-        tp, tn = pos_w.sum(axis=0), neg_w.sum(axis=0)
-        err_pos_right = cp + (tn[None, :] - cn)
-        err_pos_left = cn + (tp[None, :] - cp)
-        valid = np.zeros_like(err_pos_right, dtype=bool)
-        valid[0, :] = True
-        valid[-1, :] = True
-        if labels.size > 1:
-            valid[1:-1, :] = sorted_scores[:-1, :] < sorted_scores[1:, :]
-        err_pos_right[~valid] = np.inf
-        err_pos_left[~valid] = np.inf
-        err_pos_right[:, unavailable] = np.inf
-        err_pos_left[:, unavailable] = np.inf
+        # Best (error, split, feature) for each polarity; ties go to the
+        # smallest split, then the smallest feature, exactly like an argmin
+        # over the full (split, feature) table in row-major order.
+        best_right = (np.inf, 0, 0)
+        best_left = (np.inf, 0, 0)
+        for start, order_c, labels_c, invalid_c in chunks:
+            cols = slice(start, start + order_c.shape[1])
+            sw = active_weights[order_c]
+            pos_w = np.where(labels_c == 1, sw, 0.0)
+            neg_w = np.where(labels_c == -1, sw, 0.0)
+            width_c = pos_w.shape[1]
+            cp = np.vstack([np.zeros((1, width_c)), np.cumsum(pos_w, axis=0)])
+            cn = np.vstack([np.zeros((1, width_c)), np.cumsum(neg_w, axis=0)])
+            tp, tn = pos_w.sum(axis=0), neg_w.sum(axis=0)
+            err_pos_right = cp + (tn[None, :] - cn)
+            err_pos_left = cn + (tp[None, :] - cp)
+            err_pos_right[invalid_c] = np.inf
+            err_pos_left[invalid_c] = np.inf
+            err_pos_right[:, unavailable[cols]] = np.inf
+            err_pos_left[:, unavailable[cols]] = np.inf
+            for table, polarity_key in ((err_pos_right, 1), (err_pos_left, -1)):
+                split_c, col_c = np.unravel_index(np.argmin(table), table.shape)
+                candidate = (
+                    float(table[split_c, col_c]),
+                    int(split_c),
+                    start + int(col_c),
+                )
+                if polarity_key == 1:
+                    best_right = min(best_right, candidate)
+                else:
+                    best_left = min(best_left, candidate)
 
-        right_idx = np.unravel_index(np.argmin(err_pos_right), err_pos_right.shape)
-        left_idx = np.unravel_index(np.argmin(err_pos_left), err_pos_left.shape)
-        if err_pos_right[right_idx] <= err_pos_left[left_idx]:
-            split, feature_idx = right_idx
+        if best_right[0] <= best_left[0]:
+            error, split, feature_idx = best_right
             polarity = 1
-            error = float(err_pos_right[right_idx])
         else:
-            split, feature_idx = left_idx
+            error, split, feature_idx = best_left
             polarity = -1
-            error = float(err_pos_left[left_idx])
 
         if not np.isfinite(error) or error >= 0.5 - 1e-12:
             break  # No remaining weak learner is better than random guessing.
@@ -524,6 +570,57 @@ def ensemble_vote_all_t(
     return [ensemble_vote_t(int_img, classifiers, th) for int_img in int_images]
 
 
+def _vote_matrix(
+    classifiers: list[HaarLikeFeature], ii_stack: np.ndarray
+) -> np.ndarray:
+    """Weighted votes (alpha * ±1) with one row per sample, one column per stump.
+
+    Each entry equals ``clf.get_vote(ii)``; a running sum along a row gives
+    the same totals as summing ``get_vote`` one classifier at a time.
+    """
+    votes = np.empty((ii_stack.shape[0], len(classifiers)), dtype=np.float64)
+    for j, clf in enumerate(classifiers):
+        votes[:, j] = clf.weight * clf.predict_from_score(clf.get_score_batch(ii_stack))
+    return votes
+
+
+def _strong_scores(
+    int_imgs: list[np.ndarray] | None, classifiers: list[HaarLikeFeature]
+) -> np.ndarray:
+    """Sum of all classifiers' votes for each integral image."""
+    if not int_imgs:
+        return np.zeros(0, dtype=np.float64)
+    if not classifiers:
+        return np.zeros(len(int_imgs), dtype=np.float64)
+    return np.cumsum(_vote_matrix(classifiers, np.stack(int_imgs)), axis=1)[:, -1]
+
+
+def _cascade_passes(
+    model: "ViolaJonesCascadeModel", int_imgs: list[np.ndarray]
+) -> np.ndarray:
+    """Boolean per integral image: does it pass every cascade stage?
+
+    Same decisions as ``model.evaluate_window`` for each image, computed for
+    all images at once stage by stage (rejected images skip later stages).
+    """
+    passed = np.zeros(len(int_imgs), dtype=bool)
+    if not int_imgs or not model.stages:
+        return passed
+    stack = np.stack(int_imgs)
+    alive = np.arange(len(int_imgs))
+    for stage in model.stages:
+        stage_score = np.zeros(len(alive), dtype=np.float64)
+        for clf in stage.classifiers:
+            stage_score += clf.weight * clf.predict_from_score(
+                clf.get_score_batch(stack[alive])
+            )
+        alive = alive[stage_score >= stage.stage_threshold]
+        if alive.size == 0:
+            return passed
+    passed[alive] = True
+    return passed
+
+
 def evaluate_thresholds(
     ii_faces_training: list[np.ndarray],
     ii_non_faces_training: list[np.ndarray],
@@ -548,27 +645,26 @@ def evaluate_thresholds(
     total_pos_test = max(1, len(ii_faces_testing)) if ii_faces_testing else 0
     total_neg_test = max(1, len(ii_non_faces_testing)) if ii_non_faces_testing else 0
 
+    # Each image's strong-classifier score is computed once; a threshold only
+    # changes the comparison (same decisions as ensemble_vote_t).
+    pos_train = _strong_scores(ii_faces_training, classifiers)
+    neg_train = _strong_scores(ii_non_faces_training, classifiers)
+    pos_test = _strong_scores(ii_faces_testing, classifiers)
+    neg_test = _strong_scores(ii_non_faces_testing, classifiers)
+
     for th in thresholds:
-        correct_pos_train = sum(
-            ensemble_vote_all_t(ii_faces_training, classifiers, float(th))
-        )
-        incorrect_neg_train = sum(
-            ensemble_vote_all_t(ii_non_faces_training, classifiers, float(th))
-        )
+        correct_pos_train = int(np.count_nonzero(pos_train > float(th)))
+        incorrect_neg_train = int(np.count_nonzero(neg_train > float(th)))
         correct_neg_train = len(ii_non_faces_training) - incorrect_neg_train
 
         pcnt_faces_train.append(100.0 * correct_pos_train / total_pos_train)
         pcnt_nofaces_train.append(100.0 * correct_neg_train / total_neg_train)
 
         if ii_faces_testing:
-            correct_pos_test = sum(
-                ensemble_vote_all_t(ii_faces_testing, classifiers, float(th))
-            )
+            correct_pos_test = int(np.count_nonzero(pos_test > float(th)))
             pcnt_faces_test.append(100.0 * correct_pos_test / total_pos_test)
         if ii_non_faces_testing:
-            incorrect_neg_test = sum(
-                ensemble_vote_all_t(ii_non_faces_testing, classifiers, float(th))
-            )
+            incorrect_neg_test = int(np.count_nonzero(neg_test > float(th)))
             correct_neg_test = len(ii_non_faces_testing) - incorrect_neg_test
             pcnt_nofaces_test.append(100.0 * correct_neg_test / total_neg_test)
 
@@ -631,7 +727,7 @@ class ViolaJonesCascadeModel:
 
     def save_xml(self, xml_path: str | Path) -> Path:
         """Persist the trained cascade model to an XML file."""
-        out_path = Path(xml_path)
+        out_path = resolve_path(xml_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         root = ET.Element("opencv_storage")
@@ -681,7 +777,7 @@ class ViolaJonesCascadeModel:
     @classmethod
     def load_xml(cls, xml_path: str | Path) -> ViolaJonesCascadeModel:
         """Load a custom-trained Viola-Jones cascade XML file."""
-        path = Path(xml_path)
+        path = resolve_path(xml_path)
         if not path.exists():
             raise FileNotFoundError(f"Cascade XML not found: {path}")
 
@@ -808,7 +904,7 @@ def validate_cascade_dataset(
     window_size: tuple[int, int] = (24, 24),
 ) -> dict[str, Any]:
     """Validate folders and positive annotations before sample generation."""
-    pos_folder, neg_folder = Path(positive_dir), Path(negative_dir)
+    pos_folder, neg_folder = resolve_path(positive_dir), resolve_path(negative_dir)
     if not pos_folder.is_dir():
         raise ValueError(f"Positive images folder does not exist: {pos_folder}")
     if not neg_folder.is_dir():
@@ -1068,11 +1164,11 @@ def evaluate_cascade(
     negative_iis: list[np.ndarray],
 ) -> dict[str, float | int]:
     """Evaluate full cascade decisions on fixed-size positive/negative patches."""
-    pos_pred = [model.evaluate_window(ii)[0] for ii in positive_iis]
-    neg_pred = [model.evaluate_window(ii)[0] for ii in negative_iis]
-    tp = int(sum(pos_pred))
+    pos_pred = _cascade_passes(model, positive_iis)
+    neg_pred = _cascade_passes(model, negative_iis)
+    tp = int(np.count_nonzero(pos_pred))
     fn = len(pos_pred) - tp
-    fp = int(sum(neg_pred))
+    fp = int(np.count_nonzero(neg_pred))
     tn = len(neg_pred) - fp
     return {
         "tp": tp,
@@ -1128,6 +1224,14 @@ def train_viola_jones_cascade(
     """
     t_start = time.perf_counter()
     logs: list[str] = []
+    # Resolve every user-supplied path against the project folder, so the
+    # result does not depend on where the app was started.
+    positive_dir = resolve_path(positive_dir)
+    negative_dir = resolve_path(negative_dir)
+    annotations_path = resolve_path(annotations_path) if annotations_path else None
+    pos_test_dir = resolve_path(pos_test_dir) if pos_test_dir else None
+    neg_test_dir = resolve_path(neg_test_dir) if neg_test_dir else None
+    output_xml_path = resolve_path(output_xml_path)
     window_size = (int(window_width), int(window_height))
     if window_width < 8 or window_height < 8:
         raise ValueError("Window width and height must be at least 8 pixels.")
@@ -1252,14 +1356,18 @@ def train_viola_jones_cascade(
         prefix_candidates: list[
             tuple[float, int, list[HaarLikeFeature], float, float]
         ] = []
+        # Running sums of the vote matrix give every prefix's stage score at
+        # once (column k-1 = score with the first k weak classifiers).
+        pos_prefix_scores = np.cumsum(
+            _vote_matrix(learners, np.stack(active_pos)), axis=1
+        )
+        neg_prefix_scores = np.cumsum(
+            _vote_matrix(learners, np.stack(active_neg)), axis=1
+        )
         for count in range(1, len(learners) + 1):
             prefix = learners[:count]
-            pos_scores = np.asarray(
-                [sum(c.get_vote(ii) for c in prefix) for ii in active_pos]
-            )
-            neg_scores = np.asarray(
-                [sum(c.get_vote(ii) for c in prefix) for ii in active_neg]
-            )
+            pos_scores = pos_prefix_scores[:, count - 1]
+            neg_scores = neg_prefix_scores[:, count - 1]
             threshold, achieved_hit = _stage_threshold_for_hit_rate(
                 pos_scores, min_hit_rate
             )
@@ -1291,8 +1399,8 @@ def train_viola_jones_cascade(
 
         # Carry forward only windows that pass this stage. This is essential
         # for training later cascade stages on the hard examples that survive.
-        pos_scores = np.asarray([stage.score(ii) for ii in active_pos])
-        neg_scores = np.asarray([stage.score(ii) for ii in active_neg])
+        pos_scores = pos_prefix_scores[:, len(stage_classifiers) - 1]
+        neg_scores = neg_prefix_scores[:, len(stage_classifiers) - 1]
         next_pos = [
             ii for ii, score in zip(active_pos, pos_scores) if score >= stage_threshold
         ]
@@ -1490,7 +1598,8 @@ def render_viola_jones_training_summary(
     threshold_eval: dict[str, Any],
 ) -> Image.Image:
     """Render training summary figure (Integral images + Haar features + chart)."""
-    fig = plt.figure(figsize=(12, 7.5), dpi=100)
+    # An off-screen Figure (not pyplot), so this can run in a worker thread.
+    fig = Figure(figsize=(12, 7.5), dpi=100)
     gs = fig.add_gridspec(2, 4, height_ratios=[1.0, 1.25], hspace=0.38, wspace=0.3)
 
     # Top row: Sample Face, Integral Image, Non-Face, Top Haar Feature Overlay
@@ -1516,7 +1625,7 @@ def render_viola_jones_training_summary(
     colors = ["#00ff66", "#ff3366", "#33ccff"]
     for idx, clf in enumerate(all_clfs[:3]):
         r0, c0 = clf.top_left
-        rect = plt.Rectangle(
+        rect = Rectangle(
             (c0, r0),
             clf.width,
             clf.height,
@@ -1578,7 +1687,6 @@ def render_viola_jones_training_summary(
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -1659,7 +1767,7 @@ def ask_viola_jones_training_parameters(
             output_xml_var.set(selected)
 
     def _generate_demo_data() -> None:
-        demo_root = Path("datasets/viola_jones_demo")
+        demo_root = DATASETS_DIR / "viola_jones_demo"
         paths = create_synthetic_face_nonface_dataset(
             demo_root, window_size=(24, 24), n_pos=40, n_neg=80
         )
@@ -2025,7 +2133,15 @@ class ViolaJonesTrainerTool(ForensicsTool):
             if parameters is None:
                 return None
 
-        training_out = train_viola_jones_cascade(**parameters)
+        # Training can take minutes: run it off the UI thread with a progress
+        # window (it runs directly when there is no real window, e.g. in tests).
+        training_out = run_with_progress(
+            parent,
+            "Viola-Jones Trainer",
+            "Training the cascade. This can take a few minutes for large datasets.",
+            train_viola_jones_cascade,
+            **parameters,
+        )
         cfg = training_out["config"]
         xml_path = Path(training_out["xml_path"])
 

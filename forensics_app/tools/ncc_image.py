@@ -47,6 +47,22 @@ def compute_normalized_cross_correlation(
     tuple[np.ndarray, np.ndarray]
         (image_array, correlation_map) where correlation_map has values in [-1.0, 1.0].
     """
+    image_array, correlation, _ = _correlate_with_rotated_template(
+        image, template, angle
+    )
+    return image_array, correlation
+
+
+def _correlate_with_rotated_template(
+    image: Image.Image,
+    template: Image.Image,
+    angle: float = 0.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return (image_array, correlation_map, rotated_template_array).
+
+    Computing all three together lets the thresholded view reuse the map and
+    the rotated template instead of computing them a second time.
+    """
     if not math.isfinite(angle) or not -180 <= angle <= 180:
         raise ValueError("Rotation angle must be between -180 and 180 degrees.")
 
@@ -64,7 +80,7 @@ def compute_normalized_cross_correlation(
         raise ValueError("The template must not be larger than the original image.")
 
     correlation = match_template(image_array, template_array, pad_input=True)
-    return image_array, correlation
+    return image_array, correlation, template_array
 
 
 def superimpose_matches(
@@ -146,6 +162,8 @@ def plot_template_matching(
     *,
     superimpose_mode: str = "red",
     point_radius: int = 5,
+    correlation: np.ndarray | None = None,
+    template_array: np.ndarray | None = None,
 ) -> Image.Image:
     """Plot rotated template and thresholded image side-by-side matching Set 4.2.
 
@@ -163,21 +181,19 @@ def plot_template_matching(
         Superimposition style (default 'red').
     point_radius : int
         Visual size in pixels of matching points (default 5).
+    correlation, template_array : np.ndarray, optional
+        A correlation map and rotated template already computed for these
+        inputs; when both are given they are reused instead of recomputed.
 
     Returns
     -------
     PIL.Image.Image
         Rendered figure showing 'Template' and 'Thresholded image'.
     """
-    image_array, correlation = compute_normalized_cross_correlation(
-        image, template, angle=angle
-    )
-
-    template_array = rotate(
-        np.asarray(template.convert("L")),
-        angle=angle,
-        preserve_range=True,
-    )
+    if correlation is None or template_array is None:
+        _, correlation, template_array = _correlate_with_rotated_template(
+            image, template, angle
+        )
 
     thresholded = superimpose_matches(
         image,
@@ -389,14 +405,16 @@ class NormalizedCrossCorrelationTool(ForensicsTool):
         }
 
         if is_thresholded and threshold is not None:
+            _, correlation, template_array = _correlate_with_rotated_template(
+                original, template, angle
+            )
             output = plot_template_matching(
                 original,
                 template,
                 angle=angle,
                 threshold=threshold,
-            )
-            _, correlation = compute_normalized_cross_correlation(
-                original, template, angle=angle
+                correlation=correlation,
+                template_array=template_array,
             )
             matches_count = int(np.count_nonzero(correlation >= threshold))
             details["Threshold"] = f"{threshold:.2f}"

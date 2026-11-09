@@ -19,6 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 import joblib
+from matplotlib.figure import Figure
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image, ImageTk
@@ -29,12 +30,14 @@ from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import DATASETS_DIR, MODELS_DIR, resolve_path
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp", ".pgm"}
-DEFAULT_EIGENFACE_MODEL_DIR = Path("models/eigenface_model")
-DEFAULT_LFW_EXPORT_DIR = Path("datasets/lfw_faces")
+DEFAULT_EIGENFACE_MODEL_DIR = MODELS_DIR / "eigenface_model"
+DEFAULT_LFW_EXPORT_DIR = DATASETS_DIR / "lfw_faces"
 
 
 def plot_gallery(
@@ -55,7 +58,14 @@ def plot_gallery(
     aspect = w / max(1, h)
     cell_h = 2.4
     cell_w = max(1.5, cell_h * aspect)
-    fig = plt.figure(figsize=(cell_w * n_col, cell_h * n_row), dpi=100)
+    # Off-screen Figure (not pyplot) unless the gallery is to be shown, so it
+    # can be rendered from a worker thread.
+    figsize = (cell_w * n_col, cell_h * n_row)
+    fig = (
+        plt.figure(figsize=figsize, dpi=100)
+        if show
+        else Figure(figsize=figsize, dpi=100)
+    )
     fig.subplots_adjust(
         bottom=0.02, left=0.02, right=0.98, top=0.90, hspace=0.38, wspace=0.18
     )
@@ -63,7 +73,7 @@ def plot_gallery(
     count = min(len(images), len(titles), n_row * n_col)
     for i in range(count):
         ax = fig.add_subplot(n_row, n_col, i + 1)
-        ax.imshow(images[i].reshape((h, w)), cmap=plt.cm.gray)
+        ax.imshow(images[i].reshape((h, w)), cmap="gray")
         ax.set_title(titles[i], size=10)
         ax.set_xticks(())
         ax.set_yticks(())
@@ -72,7 +82,7 @@ def plot_gallery(
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.08)
     if show:
         plt.show()
-    plt.close(fig)
+        plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -112,7 +122,7 @@ def save_split_dataset_to_folder(
     1. Save the images to a folder (train and test)
     2. Preserve labels and correspondence (image <-> name pairs)
     """
-    out_root = Path(export_dir)
+    out_root = resolve_path(export_dir)
     train_dir = out_root / "train"
     test_dir = out_root / "test"
     train_dir.mkdir(parents=True, exist_ok=True)
@@ -276,7 +286,7 @@ def load_face_dataset(
     # Local dataset folder
     if not folder_path:
         raise ValueError("folder_path is required when loading a local dataset.")
-    root = Path(folder_path)
+    root = resolve_path(folder_path)
     if not root.exists() or not root.is_dir():
         raise ValueError(f"Local dataset folder does not exist: {root}")
 
@@ -582,7 +592,7 @@ def render_pca_summary_image(
     fig_w = max(10.0, total_cols * 2.1 * max(0.75, aspect))
     fig_h = max(7.5, (n_row + 1.2) * 2.2)
 
-    fig = plt.figure(figsize=(fig_w, fig_h), dpi=100)
+    fig = Figure(figsize=(fig_w, fig_h), dpi=100)
     gs = fig.add_gridspec(
         n_row + 1,
         total_cols,
@@ -593,7 +603,7 @@ def render_pca_summary_image(
 
     # Mean face in top-left panel
     ax_mean = fig.add_subplot(gs[0, 0])
-    ax_mean.imshow(mean_face, cmap=plt.cm.gray)
+    ax_mean.imshow(mean_face, cmap="gray")
     ax_mean.set_title("Mean Face (μ)", fontsize=10, fontweight="bold")
     ax_mean.set_xticks(())
     ax_mean.set_yticks(())
@@ -630,7 +640,7 @@ def render_pca_summary_image(
         r = i // n_col
         c = (i % n_col) + 1
         ax = fig.add_subplot(gs[r, c])
-        ax.imshow(eigenfaces[i].reshape((h, w)), cmap=plt.cm.gray)
+        ax.imshow(eigenfaces[i].reshape((h, w)), cmap="gray")
         pct = var_ratios[i] * 100.0 if i < len(var_ratios) else 0.0
         ax.set_title(f"eigenface {i}\n({pct:.1f}%)", fontsize=9)
         ax.set_xticks(())
@@ -656,7 +666,6 @@ def render_pca_summary_image(
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -680,7 +689,7 @@ def save_eigenface_model(
       - ``eigenfaces_gallery.png``
       - ``train_images/`` and ``test_images/`` (for retrieving training & test faces)
     """
-    out_dir = Path(model_dir)
+    out_dir = resolve_path(model_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     train_imgs_dir = out_dir / "train_images"
     test_imgs_dir = out_dir / "test_images"
@@ -841,7 +850,7 @@ def project_faces_with_saved_pca(
 
 def load_eigenface_model(model_path: str | Path) -> dict[str, Any]:
     """Load a persisted Eigenface / PCA model directory or ``pca_model.npz`` file."""
-    p = Path(model_path)
+    p = resolve_path(model_path)
     model_dir = p if p.is_dir() else p.parent
     npz_path = model_dir / "pca_model.npz" if p.is_dir() else p
     if not npz_path.exists():
@@ -1062,7 +1071,7 @@ def train_knn_classifier(
 
 def save_knn_classifier(knn_bundle: dict[str, Any], path: str | Path) -> Path:
     """Persist the trained K-NN classifier bundle with its paired PCA model_id."""
-    out_path = Path(path)
+    out_path = resolve_path(path)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "classifier": knn_bundle["classifier"],
@@ -1086,7 +1095,7 @@ def load_knn_classifier(
     path: str | Path, expected_pca_model_id: str | None = None
 ) -> dict[str, Any]:
     """Load a persisted K-NN classifier and verify compatibility with the PCA model."""
-    p = Path(path)
+    p = resolve_path(path)
     if p.is_dir():
         p = p / "knn_classifier.joblib"
     if not p.exists():
@@ -1147,7 +1156,7 @@ def render_knn_evaluation_image(
     conf_mat = knn_bundle.get("confusion_matrix")
     acc = knn_bundle.get("accuracy")
 
-    fig = plt.figure(figsize=(13.5, 7.5), dpi=100)
+    fig = Figure(figsize=(13.5, 7.5), dpi=100)
     gs = fig.add_gridspec(4, 6, wspace=0.28, hspace=0.48)
 
     # Left 4x4 grid: Qualitative predictions (Exercise #5 of reference notebook)
@@ -1157,7 +1166,7 @@ def render_knn_evaluation_image(
             r = i // 4
             c = i % 4
             ax = fig.add_subplot(gs[r, c])
-            ax.imshow(X_test[i].reshape((h, w)), cmap=plt.cm.gray)
+            ax.imshow(X_test[i].reshape((h, w)), cmap="gray")
             lbl_title = title(y_pred, y_test, target_names, i)
             is_correct = int(y_pred[i]) == int(y_test[i])
             ax.set_title(
@@ -1224,7 +1233,6 @@ def render_knn_evaluation_image(
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -1624,85 +1632,107 @@ class EigenfaceTrainerDialog:
             self.coeffs_tree.insert("", "end", text=fname, values=tuple(vals))
 
     def _run_pca_training(self) -> None:
+        # Read every setting on the main thread; the job itself must not touch Tk.
         try:
-            self.status_var.set("Loading dataset and computing PCA eigenfaces…")
-            self.dialog.update_idletasks()
-
             export_dir = (
                 self.export_dir_var.get().strip()
                 if self.export_images_var.get()
                 else None
             )
-            dataset = load_face_dataset(
-                source=self.source_var.get(),
-                folder_path=self.local_folder_var.get().strip() or None,
-                min_faces_per_person=int(self.min_faces_var.get()),
-                resize=float(self.resize_var.get()),
-                test_size=float(self.test_split_var.get()),
-                random_state=int(self.seed_var.get()),
-                export_dir=export_dir,
-            )
-            pca_res = train_eigenface_pca(
-                dataset,
-                n_components=int(self.n_components_var.get()),
-                svd_solver=self.solver_var.get(),
-                whiten=bool(self.whiten_var.get()),
-                random_state=int(self.seed_var.get()),
-            )
+            dataset_options = {
+                "source": self.source_var.get(),
+                "folder_path": self.local_folder_var.get().strip() or None,
+                "min_faces_per_person": int(self.min_faces_var.get()),
+                "resize": float(self.resize_var.get()),
+                "test_size": float(self.test_split_var.get()),
+                "random_state": int(self.seed_var.get()),
+                "export_dir": export_dir,
+            }
+            n_components = int(self.n_components_var.get())
+            svd_solver = self.solver_var.get()
+            whiten = bool(self.whiten_var.get())
+            seed = int(self.seed_var.get())
+            gallery_rows = int(self.gallery_rows_var.get())
+            gallery_cols = int(self.gallery_cols_var.get())
             model_dir = Path(
                 self.model_dir_var.get().strip() or str(DEFAULT_EIGENFACE_MODEL_DIR)
+            )
+        except (ValueError, tk.TclError) as exc:
+            messagebox.showerror(
+                "PCA Training Failed", f"Invalid setting: {exc}", parent=self.dialog
+            )
+            return
+
+        def job() -> tuple[str, dict[str, Any]]:
+            dataset = load_face_dataset(**dataset_options)
+            pca_res = train_eigenface_pca(
+                dataset,
+                n_components=n_components,
+                svd_solver=svd_solver,
+                whiten=whiten,
+                random_state=seed,
             )
             saved_paths = save_eigenface_model(
                 pca_res,
                 model_dir=model_dir,
-                gallery_rows=int(self.gallery_rows_var.get()),
-                gallery_cols=int(self.gallery_cols_var.get()),
+                gallery_rows=gallery_rows,
+                gallery_cols=gallery_cols,
             )
             pca_res["model_dir"] = saved_paths["model_dir"]
-            summary_img = render_pca_summary_image(
-                pca_res,
-                n_row=int(self.gallery_rows_var.get()),
-                n_col=int(self.gallery_cols_var.get()),
+            pca_res["summary_image"] = render_pca_summary_image(
+                pca_res, n_row=gallery_rows, n_col=gallery_cols
             )
-            pca_res["summary_image"] = summary_img
-            self.pca_result = pca_res
+            return dataset["source"], pca_res
 
-            self._render_on_canvas(self.pca_canvas, summary_img)
-            self._populate_coeffs_table(pca_res)
-
-            h, w = pca_res["image_shape"]
-            exp_pct = pca_res["total_explained_variance"] * 100
-            w_shape = pca_res["X_train_pca"].shape
-            self.tool_result = ToolResult(
-                image=summary_img,
-                message=(
-                    f"Trained Eigenface PCA ({pca_res['n_components']} components, "
-                    f"{exp_pct:.1f}% explained variance) -> {model_dir.name}."
-                ),
-                details={
-                    "Operation": "Eigenface / PCA Training",
-                    "Dataset source": dataset["source"],
-                    "Train / Test faces": (
-                        f"{len(pca_res['X_train'])} / {len(pca_res['X_test'])}"
-                    ),
-                    "Identities": len(pca_res["target_names"]),
-                    "Image dimensions": f"{w} × {h}",
-                    "PCA components": pca_res["n_components"],
-                    "Solver / Whitening": (
-                        f"{pca_res['svd_solver']} / {pca_res['whiten']}"
-                    ),
-                    "Explained variance": f"{exp_pct:.2f}%",
-                    "PCA weights matrix": f"{w_shape[0]} × {w_shape[1]}",
-                    "Model directory": str(model_dir),
-                },
-            )
-            self.status_var.set(
-                f"PCA trained and saved to {model_dir}. "
-                "You can now inspect coefficients or train K-NN."
+        self.status_var.set("Loading dataset and computing PCA eigenfaces…")
+        try:
+            dataset_source, pca_res = run_with_progress(
+                self.dialog,
+                "Eigenface / PCA Trainer",
+                "Loading the face dataset (downloaded on first use) and "
+                "computing eigenfaces…",
+                job,
             )
         except Exception as exc:
             messagebox.showerror("PCA Training Failed", str(exc), parent=self.dialog)
             self.status_var.set("PCA training failed.")
+            return
+
+        summary_img = pca_res["summary_image"]
+        self.pca_result = pca_res
+        self._render_on_canvas(self.pca_canvas, summary_img)
+        self._populate_coeffs_table(pca_res)
+
+        h, w = pca_res["image_shape"]
+        exp_pct = pca_res["total_explained_variance"] * 100
+        w_shape = pca_res["X_train_pca"].shape
+        self.tool_result = ToolResult(
+            image=summary_img,
+            message=(
+                f"Trained Eigenface PCA ({pca_res['n_components']} components, "
+                f"{exp_pct:.1f}% explained variance) -> {model_dir.name}."
+            ),
+            details={
+                "Operation": "Eigenface / PCA Training",
+                "Dataset source": dataset_source,
+                "Train / Test faces": (
+                    f"{len(pca_res['X_train'])} / {len(pca_res['X_test'])}"
+                ),
+                "Identities": len(pca_res["target_names"]),
+                "Image dimensions": f"{w} × {h}",
+                "PCA components": pca_res["n_components"],
+                "Solver / Whitening": (
+                    f"{pca_res['svd_solver']} / {pca_res['whiten']}"
+                ),
+                "Explained variance": f"{exp_pct:.2f}%",
+                "PCA weights matrix": f"{w_shape[0]} × {w_shape[1]}",
+                "Model directory": str(model_dir),
+            },
+        )
+        self.status_var.set(
+            f"PCA trained and saved to {model_dir}. "
+            "You can now inspect coefficients or train K-NN."
+        )
 
     def _load_existing_pca(self) -> None:
         chosen = filedialog.askdirectory(
@@ -1730,9 +1760,15 @@ class EigenfaceTrainerDialog:
 
     def _run_knn_training(self) -> None:
         if self.pca_result is None:
-            model_dir = Path(self.model_dir_var.get().strip())
+            model_dir = resolve_path(self.model_dir_var.get().strip())
             if (model_dir / "pca_model.npz").exists():
-                self.pca_result = load_eigenface_model(model_dir)
+                try:
+                    self.pca_result = load_eigenface_model(model_dir)
+                except Exception as exc:
+                    messagebox.showerror(
+                        "Load PCA Failed", str(exc), parent=self.dialog
+                    )
+                    return
             else:
                 messagebox.showinfo(
                     "Train or Load PCA First",
@@ -1741,64 +1777,79 @@ class EigenfaceTrainerDialog:
                 )
                 return
 
+        # Read every setting on the main thread; the job itself must not touch Tk.
         try:
             k_cands = [
                 int(x.strip())
                 for x in self.k_candidates_var.get().split(",")
                 if x.strip()
             ]
-            knn_out = train_knn_classifier(
+            knn_options = {
+                "n_neighbors": int(self.k_neighbors_var.get()),
+                "metric": self.metric_var.get(),
+                "p": int(self.p_var.get()),
+                "weights": self.weights_var.get(),
+                "algorithm": self.algo_var.get(),
+                "use_grid_search": bool(self.use_grid_var.get()),
+                "k_candidates": k_cands or [3, 5, 7, 9, 11],
+                "cv_folds": int(self.cv_folds_var.get()),
+            }
+        except (ValueError, tk.TclError) as exc:
+            messagebox.showerror(
+                "K-NN Training Failed", f"Invalid setting: {exc}", parent=self.dialog
+            )
+            return
+
+        try:
+            knn_out = run_with_progress(
+                self.dialog,
+                "Eigenface / PCA Trainer",
+                "Training and evaluating the K-NN classifier…",
+                train_knn_classifier,
                 self.pca_result,
-                n_neighbors=int(self.k_neighbors_var.get()),
-                metric=self.metric_var.get(),
-                p=int(self.p_var.get()),
-                weights=self.weights_var.get(),
-                algorithm=self.algo_var.get(),
-                use_grid_search=bool(self.use_grid_var.get()),
-                k_candidates=k_cands or [3, 5, 7, 9, 11],
-                cv_folds=int(self.cv_folds_var.get()),
-            )
-            self.knn_result = knn_out
-
-            self.report_text.delete("1.0", "end")
-            self.report_text.insert("1.0", knn_out.get("classification_report", ""))
-
-            eval_img = knn_out["evaluation_image"]
-            self._render_on_canvas(self.knn_canvas, eval_img)
-
-            acc = knn_out.get("accuracy")
-            acc_str = f"{acc * 100:.2f}%" if acc is not None else "N/A"
-            exp_pct = self.pca_result["total_explained_variance"] * 100
-            self.tool_result = ToolResult(
-                image=eval_img,
-                message=(
-                    f"Trained K-NN classifier (k={knn_out['best_k']}, "
-                    f"accuracy={acc_str}) paired with PCA model "
-                    f"{self.pca_result['model_id'][:8]}."
-                ),
-                details={
-                    "Operation": "PCA + K-NN Training",
-                    "PCA components": self.pca_result["n_components"],
-                    "Explained variance": f"{exp_pct:.2f}%",
-                    "K-NN best k": knn_out["best_k"],
-                    "Metric / Weighting": (
-                        f"{knn_out['metric']} / {knn_out['weights']}"
-                    ),
-                    "GridSearchCV": "Yes" if knn_out["use_grid_search"] else "No",
-                    "Test accuracy": acc_str,
-                    "Saved classifier": (
-                        Path(knn_out["joblib_path"]).name
-                        if knn_out.get("joblib_path")
-                        else "—"
-                    ),
-                    "Model directory": str(self.pca_result.get("model_dir", "")),
-                },
-            )
-            self.status_var.set(
-                f"K-NN trained (k={knn_out['best_k']}, Test Accuracy={acc_str})."
+                **knn_options,
             )
         except Exception as exc:
             messagebox.showerror("K-NN Training Failed", str(exc), parent=self.dialog)
+            return
+
+        self.knn_result = knn_out
+        self.report_text.delete("1.0", "end")
+        self.report_text.insert("1.0", knn_out.get("classification_report", ""))
+        eval_img = knn_out["evaluation_image"]
+        self._render_on_canvas(self.knn_canvas, eval_img)
+
+        acc = knn_out.get("accuracy")
+        acc_str = f"{acc * 100:.2f}%" if acc is not None else "N/A"
+        exp_pct = self.pca_result["total_explained_variance"] * 100
+        self.tool_result = ToolResult(
+            image=eval_img,
+            message=(
+                f"Trained K-NN classifier (k={knn_out['best_k']}, "
+                f"accuracy={acc_str}) paired with PCA model "
+                f"{self.pca_result['model_id'][:8]}."
+            ),
+            details={
+                "Operation": "PCA + K-NN Training",
+                "PCA components": self.pca_result["n_components"],
+                "Explained variance": f"{exp_pct:.2f}%",
+                "K-NN best k": knn_out["best_k"],
+                "Metric / Weighting": (
+                    f"{knn_out['metric']} / {knn_out['weights']}"
+                ),
+                "GridSearchCV": "Yes" if knn_out["use_grid_search"] else "No",
+                "Test accuracy": acc_str,
+                "Saved classifier": (
+                    Path(knn_out["joblib_path"]).name
+                    if knn_out.get("joblib_path")
+                    else "—"
+                ),
+                "Model directory": str(self.pca_result.get("model_dir", "")),
+            },
+        )
+        self.status_var.set(
+            f"K-NN trained (k={knn_out['best_k']}, Test Accuracy={acc_str})."
+        )
 
     def _apply_and_close(self) -> None:
         self.dialog.destroy()

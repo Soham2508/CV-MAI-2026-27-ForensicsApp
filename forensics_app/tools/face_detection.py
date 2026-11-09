@@ -24,9 +24,11 @@ from skimage import data as skimage_data
 from skimage.feature import Cascade as SkimageCascade
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import MODELS_DIR, PROJECT_ROOT, resolve_path
 
 from .base import ForensicsTool, ToolResult
 from .viola_jones_trainer import (
+    DEFAULT_CASCADE_DIR,
     DEFAULT_CASCADE_XML,
     FeatureType,
     HaarLikeFeature,
@@ -42,7 +44,7 @@ YUNET_MODEL_URL = (
     "https://huggingface.co/opencv/opencv_zoo/resolve/main/"
     "models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 )
-DEFAULT_YUNET_MODEL_PATH = Path("models/face_detection_yunet_2023mar.onnx")
+DEFAULT_YUNET_MODEL_PATH = MODELS_DIR / "face_detection_yunet_2023mar.onnx"
 
 LANDMARK_NAMES: tuple[str, ...] = (
     "Right eye",
@@ -82,18 +84,18 @@ def ensure_yunet_model(model_path: str | Path | None = None) -> Path:
     """Locate or download the pretrained YuNet ONNX model."""
     candidates: list[Path] = []
     if model_path:
-        candidates.append(Path(model_path))
+        candidates.append(resolve_path(model_path))
     candidates.extend(
         [
             DEFAULT_YUNET_MODEL_PATH,
-            Path("face_detection_yunet_2023mar.onnx"),
+            PROJECT_ROOT / "face_detection_yunet_2023mar.onnx",
         ]
     )
     for cand in candidates:
         if cand.exists() and cand.is_file() and cand.stat().st_size >= YUNET_MIN_BYTES:
             return cand
 
-    target = Path(model_path) if model_path else DEFAULT_YUNET_MODEL_PATH
+    target = resolve_path(model_path) if model_path else DEFAULT_YUNET_MODEL_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
     # Download to a temporary file and only rename it into place once it is
     # complete, so an interrupted download is never mistaken for the model.
@@ -372,7 +374,7 @@ class ViolaJonesDetector(FaceDetector):
         self._backend_kind: str = "unloaded"
 
     def load_model(self, model_path: str | Path | None = None) -> None:
-        chosen = Path(model_path) if model_path else self.model_path
+        chosen = resolve_path(model_path) if model_path else self.model_path
         self._custom_model = None
         self._cv2_cascade = None
         self._skimage_cascade = None
@@ -699,8 +701,8 @@ def ask_face_detection_parameters(
     )
     yunet_default = str(DEFAULT_YUNET_MODEL_PATH)
     vj_candidates = (
-        list(Path("models/viola_jones").glob("**/cascade.xml"))
-        if Path("models/viola_jones").exists()
+        list(DEFAULT_CASCADE_DIR.glob("**/cascade.xml"))
+        if DEFAULT_CASCADE_DIR.exists()
         else []
     )
     if vj_candidates:

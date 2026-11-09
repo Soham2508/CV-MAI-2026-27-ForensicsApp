@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import io
-import math
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
@@ -11,11 +10,12 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
-from skimage.feature import ORB, SIFT, match_descriptors, plot_matched_features
+from skimage.feature import match_descriptors, plot_matched_features
 
 from forensics_app.core import ImageDocument
 
 from .base import ForensicsTool, ToolResult
+from .local_features import detect_and_describe
 
 IMAGE_TYPES = [
     ("Image files", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),
@@ -34,74 +34,23 @@ def extract_descriptors(
 ) -> tuple[np.ndarray, np.ndarray]:
     """Extract keypoints and descriptors from an image using ORB or SIFT.
 
-    Parameters
-    ----------
-    image : PIL.Image.Image
-        Input image.
-    method : str
-        Feature extraction method, either 'ORB' or 'SIFT'.
-    n_keypoints : int
-        Maximum number of keypoints for ORB.
-    n_octaves : int
-        Number of octaves for SIFT.
-    n_scales : int
-        Number of scales per octave for SIFT.
-    sigma_min : float
-        Initial Gaussian blur standard deviation for SIFT.
+    Thin wrapper around :func:`local_features.detect_and_describe` (shared with
+    Descriptor extraction). ORB uses the library's default FAST threshold (0.08).
 
     Returns
     -------
     tuple[np.ndarray, np.ndarray]
-        (keypoints, descriptors) where keypoints has shape (N, 2) with (row, col) coordinates,
-        and descriptors has shape (N, 256) for ORB or (N, 128) for SIFT.
+        (keypoints, descriptors) where keypoints has shape (N, 2) with (row, col)
+        coordinates, and descriptors has shape (N, 256) for ORB or (N, 128) for SIFT.
     """
-    method_upper = method.upper()
-    if method_upper not in ("ORB", "SIFT"):
-        raise ValueError("Choose ORB or SIFT.")
-
-    if method_upper == "ORB":
-        if type(n_keypoints) is not int or n_keypoints < 1:
-            raise ValueError("ORB keypoint count must be a positive integer.")
-        extractor = ORB(n_keypoints=n_keypoints)
-        descriptor_width, descriptor_dtype = 256, np.bool_
-        minimum_size = 32
-    else:
-        if type(n_octaves) is not int or n_octaves < 1:
-            raise ValueError("SIFT octave count must be a positive integer.")
-        if type(n_scales) is not int or n_scales < 1:
-            raise ValueError("SIFT scale count must be a positive integer.")
-        if not math.isfinite(sigma_min) or sigma_min < 1.0:
-            raise ValueError("SIFT sigma_min must be finite and at least 1.0.")
-        extractor = SIFT(
-            upsampling=2,
-            n_octaves=n_octaves,
-            n_scales=n_scales,
-            sigma_min=sigma_min,
-        )
-        descriptor_width, descriptor_dtype = 128, np.uint8
-        minimum_size = 12
-
-    if min(image.size) < minimum_size:
-        raise ValueError(
-            f"{method_upper} needs an image at least "
-            f"{minimum_size} by {minimum_size} pixels for this tool."
-        )
-
-    gray_image = image.convert("L")
-    gray = np.asarray(gray_image, dtype=np.float32) / 255.0
-
-    try:
-        extractor.detect_and_extract(gray)
-    except RuntimeError as error:
-        if not str(error).startswith(f"{method_upper} found no features."):
-            raise
-        keypoints = np.empty((0, 2), dtype=np.float64)
-        descriptors = np.empty((0, descriptor_width), dtype=descriptor_dtype)
-    else:
-        keypoints = extractor.keypoints.copy()
-        descriptors = extractor.descriptors.copy()
-
-    return keypoints, descriptors
+    return detect_and_describe(
+        image,
+        method,
+        n_keypoints=n_keypoints,
+        n_octaves=n_octaves,
+        n_scales=n_scales,
+        sigma_min=sigma_min,
+    )
 
 
 def match_image_descriptors(

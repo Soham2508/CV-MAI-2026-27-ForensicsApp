@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import math
 import tkinter as tk
 
 import numpy as np
 from PIL import Image, ImageDraw
-from skimage.feature import ORB, SIFT
 
 from forensics_app.core import ImageDocument
 from forensics_app.utils.parameter_dialog import ParameterField, ask_parameters
 
 from .base import ForensicsTool, ToolResult
+from .local_features import detect_and_describe
 
 
 def extract_descriptors(
@@ -25,62 +24,27 @@ def extract_descriptors(
     n_scales: int = 3,
     sigma_min: float = 1.6,
 ) -> tuple[np.ndarray, np.ndarray, Image.Image]:
+    """Detect and describe keypoints, and draw them as red circles.
 
-    if method not in ("ORB", "SIFT"):
-        raise ValueError("Choose ORB or SIFT.")
-
-    if method == "ORB":
-        if type(n_keypoints) is not int or n_keypoints < 1:
-            raise ValueError("ORB keypoint count must be a positive integer.")
-        if not math.isfinite(fast_threshold) or not 0 <= fast_threshold <= 1:
-            raise ValueError("FAST threshold must be between 0 and 1.")
-        extractor = ORB(n_keypoints=n_keypoints, fast_threshold=fast_threshold)
-        descriptor_width, descriptor_dtype = 256, np.bool_
-        minimum_size = 32
-    else:
-        if type(n_octaves) is not int or n_octaves < 1:
-            raise ValueError("SIFT octave count must be a positive integer.")
-        if type(n_scales) is not int or n_scales < 1:
-            raise ValueError("SIFT scale count must be a positive integer.")
-        # With upsampling=2 and sigma_in=0.5, sigma_min must be at least 1.
-        if not math.isfinite(sigma_min) or sigma_min < 1:
-            raise ValueError("SIFT sigma_min must be finite and at least 1.0.")
-        extractor = SIFT(
-            upsampling=2,
-            n_octaves=n_octaves,
-            n_scales=n_scales,
-            sigma_min=sigma_min,
-        )
-        descriptor_width, descriptor_dtype = 128, np.uint8
-        minimum_size = 12
-
-    if min(image.size) < minimum_size:
-        raise ValueError(
-            f"{method} needs an image at least "
-            f"{minimum_size} by {minimum_size} pixels for this tool."
-        )
-
-    gray_image = image.convert("L")
-    gray = np.asarray(gray_image, dtype=np.float32) / 255.0
-    try:
-        extractor.detect_and_extract(gray)
-    except RuntimeError as error:
-        # A textureless image is a valid empty result, not a tool failure.
-        if not str(error).startswith(f"{method} found no features."):
-            raise
-        keypoints = np.empty((0, 2), dtype=np.float64)
-        descriptors = np.empty((0, descriptor_width), dtype=descriptor_dtype)
-    else:
-        keypoints = extractor.keypoints.copy()
-        descriptors = extractor.descriptors.copy()
-
-    output = gray_image.convert("RGB")
+    Thin wrapper around :func:`local_features.detect_and_describe` (shared with
+    Image matching) that also returns a grayscale copy with the keypoints.
+    """
+    keypoints, descriptors = detect_and_describe(
+        image,
+        method,
+        n_keypoints=n_keypoints,
+        fast_threshold=fast_threshold,
+        n_octaves=n_octaves,
+        n_scales=n_scales,
+        sigma_min=sigma_min,
+    )
+    output = image.convert("L").convert("RGB")
     drawing = ImageDraw.Draw(output)
     for row, column in keypoints:
         x, y = float(column), float(row)
         drawing.ellipse((x - 3, y - 3, x + 3, y + 3), outline="red", width=1)
-
     return keypoints, descriptors, output
+
 
 def extract_features(
     image: Image.Image,

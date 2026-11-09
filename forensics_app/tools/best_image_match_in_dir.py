@@ -13,6 +13,7 @@ from skimage import measure, transform
 from skimage.feature import match_descriptors
 
 from forensics_app.core import ImageDocument
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 from .image_matching import extract_descriptors, plot_matches
@@ -527,7 +528,13 @@ class BestImageMatchInDirTool(ForensicsTool):
             **desc_settings,
         }
 
-        best = find_best_image_match(
+        # The search extracts features from every image in the folder: run it
+        # off the UI thread with a progress window.
+        best = run_with_progress(
+            parent,
+            "Best image match in directory",
+            f"Searching {folder_path.name or folder_path} for the best match…",
+            find_best_image_match,
             query_image=query_image,
             query_path=document.path,
             folder_path=folder_path,

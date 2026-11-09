@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import resolve_path
 
 from .base import ForensicsTool, ToolResult
 from .eigenface_trainer import (
@@ -466,7 +467,7 @@ def ask_face_recognition_parameters(
     def apply() -> None:
         nonlocal result
         pca_dir = pca_dir_var.get().strip()
-        if not pca_dir or not Path(pca_dir).exists():
+        if not pca_dir or not resolve_path(pca_dir).exists():
             messagebox.showerror(
                 "Missing PCA Model",
                 "Please select a valid trained Eigenface / PCA model directory.",
@@ -476,7 +477,7 @@ def ask_face_recognition_parameters(
 
         use_cur = bool(use_current_img_var.get()) and document.is_loaded
         tpath = test_img_path_var.get().strip()
-        if not use_cur and (not tpath or not Path(tpath).exists()):
+        if not use_cur and (not tpath or not resolve_path(tpath).exists()):
             messagebox.showerror(
                 "Missing Test Image",
                 "Please open an image or select a test face image file.",
@@ -536,7 +537,7 @@ class FaceRecognitionTool(ForensicsTool):
 
         knn_bundle: dict[str, Any] | None = None
         knn_path = parameters.get("knn_model_path")
-        if knn_path and Path(knn_path).exists():
+        if knn_path and resolve_path(knn_path).exists():
             knn_bundle = load_knn_classifier(
                 knn_path, expected_pca_model_id=pca_model["model_id"]
             )
@@ -554,7 +555,7 @@ class FaceRecognitionTool(ForensicsTool):
             test_img = document.current
             test_path = document.path
         else:
-            test_path = parameters["test_image_path"]
+            test_path = resolve_path(parameters["test_image_path"])
             with Image.open(test_path) as img:
                 test_img = img.copy()
 
