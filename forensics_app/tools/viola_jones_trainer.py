@@ -1,8 +1,9 @@
-"""Tool 1 — Viola–Jones (Haar + AdaBoost) Cascade Trainer.
+"""Tool 1 — Viola-Jones (Haar + AdaBoost) Cascade Trainer.
 
-Implements integral image computation, Haar-like feature evaluation, AdaBoost
-weak-classifier selection from the reference notebook, and multi-stage cascade
-training with XML/JSON persistence and validation plots.
+Implements integral images, correctly threshold-optimised Haar decision stumps,
+discrete AdaBoost, stage-wise cascade training, full-cascade patch evaluation,
+and custom XML/JSON persistence. The XML is a ForensicsApp format, not OpenCV's
+native CascadeClassifier XML format.
 """
 
 from __future__ import annotations
@@ -11,7 +12,6 @@ from dataclasses import dataclass, field
 import io
 import json
 from pathlib import Path
-import shutil
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -98,11 +98,24 @@ def sum_region(
 
 
 def _normalize_patch(image_arr: np.ndarray) -> np.ndarray:
-    arr = np.asarray(image_arr, dtype=np.float64)
-    max_val = float(np.max(arr))
-    if max_val > 0:
-        arr = arr / max_val
-    return arr
+    """Convert grayscale pixels to a stable [0, 1] floating representation.
+
+    Do not divide each patch by its own maximum: that makes the feature scale
+    depend on a single bright pixel and can amplify noise in dark patches.
+    """
+    arr = np.asarray(image_arr, dtype=np.float32)
+    if arr.ndim != 2:
+        raise ValueError("Expected a two-dimensional grayscale image.")
+    if arr.size == 0:
+        raise ValueError("Cannot normalise an empty image.")
+    if float(np.nanmax(arr)) > 1.0:
+        arr = arr / 255.0
+    return np.clip(arr, 0.0, 1.0)
+
+
+def _integral_from_patch(image_arr: np.ndarray) -> np.ndarray:
+    """Build a zero-padded integral image from a grayscale patch."""
+    return compute_integral_image(_normalize_patch(image_arr))
 
 
 def load_integral_images(
@@ -110,47 +123,50 @@ def load_integral_images(
     *,
     window_size: tuple[int, int] | None = None,
     max_samples: int | None = None,
+    random_seed: int = 42,
 ) -> list[np.ndarray]:
-    """Read images inside a folder and compute the normalized integral image of each.
+    """Load cropped face/non-face patches and return their integral images.
 
-    Matches Exercise #3 in the reference notebook while supporting optional
-    window resizing and sample count limits.
+    ``window_size`` is (width, height). When provided, every patch is resized
+    to the same detector window. Files are shuffled deterministically so that
+    a sample limit does not systematically select the alphabetically first
+    images.
     """
     folder = Path(path)
     if not folder.exists() or not folder.is_dir():
         raise ValueError(f"Image directory does not exist: {folder}")
 
-    ii_images: list[np.ndarray] = []
-    files = sorted(
+    files = [
         f
         for f in folder.iterdir()
         if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-    )
+    ]
+    rng = np.random.default_rng(random_seed)
+    rng.shuffle(files)
     if max_samples is not None and max_samples > 0:
         files = files[:max_samples]
 
+    ii_images: list[np.ndarray] = []
     for file_path in files:
         try:
             with Image.open(file_path) as img:
                 gray = img.convert("L")
-                if window_size is not None and gray.size != window_size:
+                if window_size is not None:
                     gray = gray.resize(window_size, Image.Resampling.BILINEAR)
-                arr = np.asarray(gray, dtype=np.float64)
-        except OSError:
+                arr = np.asarray(gray, dtype=np.uint8)
+        except (OSError, ValueError):
             continue
-
-        arr = _normalize_patch(arr)
-        integral_image = compute_integral_image(arr)
-        max_ii = float(np.max(integral_image))
-        if max_ii > 0:
-            integral_image = integral_image / max_ii
-        ii_images.append(integral_image)
-
+        ii_images.append(_integral_from_patch(arr))
     return ii_images
 
 
 class HaarLikeFeature:
-    """Class representing a Haar-like feature (Exercise #4 in the notebook)."""
+    """One Haar-like feature used as an AdaBoost decision stump.
+
+    ``polarity=+1`` predicts face for score >= threshold.
+    ``polarity=-1`` predicts face for score < threshold.
+    ``weight`` is the AdaBoost coefficient (alpha).
+    """
 
     def __init__(
         self,
@@ -162,68 +178,87 @@ class HaarLikeFeature:
         polarity: int,
         weight: float = 1.0,
     ) -> None:
+        if polarity not in (-1, 1):
+            raise ValueError("polarity must be -1 or +1")
         self.type = tuple(feature_type)
-        self.top_left = (int(position[0]), int(position[1]))
-        self.bottom_right = (int(position[0] + width), int(position[1] + height))
+        self.top_left = (int(position[0]), int(position[1]))  # row, column
         self.width = int(width)
         self.height = int(height)
+        self.bottom_right = (
+            self.top_left[0] + self.height,
+            self.top_left[1] + self.width,
+        )
         self.threshold = float(threshold)
         self.polarity = int(polarity)
         self.weight = float(weight)
 
-    def get_score(self, int_img: np.ndarray) -> float:
-        """Get feature score for a given integral image array."""
-        score = 0.0
-        tl0, tl1 = self.top_left
-        br0, br1 = self.bottom_right
-        w, h = self.width, self.height
+    @staticmethod
+    def _rect_sum_batch(
+        ii_stack: np.ndarray,
+        top: int,
+        left: int,
+        bottom: int,
+        right: int,
+    ) -> np.ndarray:
+        return (
+            ii_stack[:, bottom, right]
+            - ii_stack[:, top, right]
+            - ii_stack[:, bottom, left]
+            + ii_stack[:, top, left]
+        )
 
+    def get_score_batch(self, ii_stack: np.ndarray) -> np.ndarray:
+        """Evaluate this feature for a stack of integral images."""
+        r, c = self.top_left
+        w, h = self.width, self.height
         if self.type == FeatureType.TWO_VERTICAL:
-            first = sum_region(int_img, self.top_left, (tl0 + w, int(tl1 + h / 2)))
-            second = sum_region(int_img, (tl0, int(tl1 + h / 2)), self.bottom_right)
-            score = first - second
-        elif self.type == FeatureType.TWO_HORIZONTAL:
-            first = sum_region(int_img, self.top_left, (int(tl0 + w / 2), tl1 + h))
-            second = sum_region(int_img, (int(tl0 + w / 2), tl1), self.bottom_right)
-            score = first - second
-        elif self.type == FeatureType.THREE_HORIZONTAL:
-            first = sum_region(int_img, self.top_left, (int(tl0 + w / 3), tl1 + h))
-            second = sum_region(
-                int_img,
-                (int(tl0 + w / 3), tl1),
-                (int(tl0 + 2 * w / 3), tl1 + h),
+            half = h // 2
+            return self._rect_sum_batch(
+                ii_stack, r, c, r + half, c + w
+            ) - self._rect_sum_batch(ii_stack, r + half, c, r + h, c + w)
+        if self.type == FeatureType.TWO_HORIZONTAL:
+            half = w // 2
+            return self._rect_sum_batch(
+                ii_stack, r, c, r + h, c + half
+            ) - self._rect_sum_batch(ii_stack, r, c + half, r + h, c + w)
+        if self.type == FeatureType.THREE_HORIZONTAL:
+            third = w // 3
+            return (
+                self._rect_sum_batch(ii_stack, r, c, r + h, c + third)
+                - self._rect_sum_batch(ii_stack, r, c + third, r + h, c + 2 * third)
+                + self._rect_sum_batch(ii_stack, r, c + 2 * third, r + h, c + w)
             )
-            third = sum_region(int_img, (int(tl0 + 2 * w / 3), tl1), self.bottom_right)
-            score = first - second + third
-        elif self.type == FeatureType.THREE_VERTICAL:
-            first = sum_region(int_img, self.top_left, (br0, int(tl1 + h / 3)))
-            second = sum_region(
-                int_img,
-                (tl0, int(tl1 + h / 3)),
-                (br0, int(tl1 + 2 * h / 3)),
+        if self.type == FeatureType.THREE_VERTICAL:
+            third = h // 3
+            return (
+                self._rect_sum_batch(ii_stack, r, c, r + third, c + w)
+                - self._rect_sum_batch(ii_stack, r + third, c, r + 2 * third, c + w)
+                + self._rect_sum_batch(ii_stack, r + 2 * third, c, r + h, c + w)
             )
-            third = sum_region(int_img, (tl0, int(tl1 + 2 * h / 3)), self.bottom_right)
-            score = first - second + third
-        elif self.type == FeatureType.FOUR:
-            first = sum_region(
-                int_img, self.top_left, (int(tl0 + w / 2), int(tl1 + h / 2))
+        if self.type == FeatureType.FOUR:
+            half_h, half_w = h // 2, w // 2
+            return (
+                self._rect_sum_batch(ii_stack, r, c, r + half_h, c + half_w)
+                - self._rect_sum_batch(ii_stack, r, c + half_w, r + half_h, c + w)
+                - self._rect_sum_batch(ii_stack, r + half_h, c, r + h, c + half_w)
+                + self._rect_sum_batch(ii_stack, r + half_h, c + half_w, r + h, c + w)
             )
-            second = sum_region(
-                int_img, (int(tl0 + w / 2), tl1), (br0, int(tl1 + h / 2))
-            )
-            third = sum_region(
-                int_img, (tl0, int(tl1 + h / 2)), (int(tl0 + w / 2), br1)
-            )
-            fourth = sum_region(
-                int_img, (int(tl0 + w / 2), int(tl1 + h / 2)), self.bottom_right
-            )
-            score = first - second - third + fourth
-        return float(score)
+        raise ValueError(f"Unsupported Haar feature type: {self.type}")
+
+    def get_score(self, int_img: np.ndarray) -> float:
+        """Evaluate the feature on one zero-padded integral image."""
+        return float(self.get_score_batch(np.asarray(int_img)[None, ...])[0])
+
+    def predict_from_score(self, scores: np.ndarray | float) -> np.ndarray:
+        """Return +1 for face and -1 for non-face."""
+        values = np.asarray(scores)
+        if self.polarity == 1:
+            return np.where(values >= self.threshold, 1, -1)
+        return np.where(values < self.threshold, 1, -1)
 
     def get_vote(self, int_img: np.ndarray) -> float:
-        """Return weighted vote (+weight or -weight) for a given integral image."""
-        score = self.get_score(int_img)
-        return self.weight * (1 if score < self.polarity * self.threshold else -1)
+        pred = int(self.predict_from_score(self.get_score(int_img)))
+        return float(self.weight * pred)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -237,12 +272,13 @@ class HaarLikeFeature:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> HaarLikeFeature:
+    def from_dict(cls, data: dict[str, Any]) -> "HaarLikeFeature":
         ftype_raw = data.get("feature_type", "TWO_VERTICAL")
-        if isinstance(ftype_raw, str):
-            ftype = NAME_TO_FEATURE_TYPE.get(ftype_raw, FeatureType.TWO_VERTICAL)
-        else:
-            ftype = tuple(ftype_raw)
+        ftype = (
+            NAME_TO_FEATURE_TYPE.get(ftype_raw, FeatureType.TWO_VERTICAL)
+            if isinstance(ftype_raw, str)
+            else tuple(ftype_raw)
+        )
         pos = tuple(data["position"])
         return cls(
             feature_type=ftype,
@@ -263,146 +299,200 @@ def _create_features(
     min_feature_height: int,
     max_feature_height: int,
     feature_mode: str = "BASIC",
+    *,
+    max_features: int = 3000,
+    random_seed: int = 42,
 ) -> list[HaarLikeFeature]:
-    """Create Haar-like features for all valid sizes and locations."""
-    mode = feature_mode.upper()
-    if mode == "CORE":
-        active_types = [
-            FeatureType.TWO_VERTICAL,
-            FeatureType.TWO_HORIZONTAL,
-            FeatureType.THREE_HORIZONTAL,
-            FeatureType.THREE_VERTICAL,
-        ]
-    else:
-        active_types = FeatureTypes
+    """Generate valid Haar rectangles and cap their number reproducibly.
 
-    features: list[HaarLikeFeature] = []
-    for feature in active_types:
-        feature_start_width = max(min_feature_width, feature[0])
-        for feature_width in range(feature_start_width, max_feature_width, feature[0]):
-            feature_start_height = max(min_feature_height, feature[1])
-            for feature_height in range(
-                feature_start_height, max_feature_height, feature[1]
-            ):
-                for x in range(img_height - max_feature_height):
-                    for y in range(img_width - max_feature_width):
-                        features.append(
-                            HaarLikeFeature(
-                                feature, (x, y), feature_width, feature_height, 0, 1
-                            )
+    Width/height maxima are inclusive. Polarity is learned by AdaBoost, so each
+    geometric feature is generated once (not duplicated for both polarities).
+    """
+    mode = feature_mode.upper()
+    if mode not in {"BASIC", "CORE", "ALL"}:
+        raise ValueError("feature_mode must be BASIC, CORE or ALL")
+    active_types = FeatureTypes if mode in {"BASIC", "ALL"} else FeatureTypes[:-1]
+
+    min_fw = max(2, int(min_feature_width))
+    min_fh = max(2, int(min_feature_height))
+    max_fw = min(int(max_feature_width), img_width)
+    max_fh = min(int(max_feature_height), img_height)
+    candidates: list[HaarLikeFeature] = []
+
+    for ftype in active_types:
+        unit_w, unit_h = ftype
+        for width in range(min_fw, max_fw + 1):
+            if width % unit_w:
+                continue
+            for height in range(min_fh, max_fh + 1):
+                if height % unit_h:
+                    continue
+                for row in range(0, img_height - height + 1):
+                    for col in range(0, img_width - width + 1):
+                        candidates.append(
+                            HaarLikeFeature(ftype, (row, col), width, height, 0.0, 1)
                         )
-                        features.append(
-                            HaarLikeFeature(
-                                feature, (x, y), feature_width, feature_height, 0, -1
-                            )
-                        )
-    return features
+    if not candidates:
+        raise ValueError(
+            "No Haar features fit the training window. Increase feature bounds "
+            "or use a larger window."
+        )
+    if max_features > 0 and len(candidates) > max_features:
+        rng = np.random.default_rng(random_seed)
+        selected = rng.choice(len(candidates), size=max_features, replace=False)
+        candidates = [candidates[int(i)] for i in selected]
+    return candidates
 
 
 def learn(
     positive_iis: list[np.ndarray],
     negative_iis: list[np.ndarray],
     num_classifiers: int = -1,
-    min_feature_width: int = 1,
-    max_feature_width: int = -1,
-    min_feature_height: int = 1,
-    max_feature_height: int = -1,
+    min_feature_width: int = 2,
+    max_feature_width: int = 12,
+    min_feature_height: int = 2,
+    max_feature_height: int = 12,
     *,
     feature_mode: str = "BASIC",
+    max_features: int = 3000,
+    weight_trimming_rate: float = 1.0,
+    random_seed: int = 42,
 ) -> list[HaarLikeFeature]:
-    """Select a set of weak classifiers iteratively using AdaBoost (Exercise #4/#5).
+    """Train discrete-AdaBoost decision stumps over Haar feature responses.
 
-    Vectorized inner loop over identical candidate features for fast execution
-    while preserving the exact mathematical results of the reference notebook.
+    Each weak learner optimises both its threshold and polarity by weighted
+    classification error. The feature responses are computed once and sorted
+    once, then the sample distribution is updated between boosting rounds.
     """
-    num_pos = len(positive_iis)
-    num_neg = len(negative_iis)
-    if num_pos == 0 or num_neg == 0:
-        raise ValueError(
-            "Both positive and negative integral image lists must be non-empty."
-        )
+    if not positive_iis or not negative_iis:
+        raise ValueError("Both positive and negative integral-image sets are required.")
+    if not 0.0 < weight_trimming_rate <= 1.0:
+        raise ValueError("weight_trimming_rate must be in (0, 1].")
 
-    num_imgs = num_pos + num_neg
-    img_height, img_width = positive_iis[0].shape
-
-    max_feature_height = img_height if max_feature_height == -1 else max_feature_height
-    max_feature_width = img_width if max_feature_width == -1 else max_feature_width
-
-    pos_weights = np.ones(num_pos, dtype=np.float64) / (2.0 * num_pos)
-    neg_weights = np.ones(num_neg, dtype=np.float64) / (2.0 * num_neg)
-    weights = np.hstack((pos_weights, neg_weights))
-    labels = np.hstack((np.ones(num_pos), np.ones(num_neg) * -1.0))
-
-    images = positive_iis + negative_iis
+    all_ii = np.stack(positive_iis + negative_iis).astype(np.float32, copy=False)
+    height, width = all_ii.shape[1] - 1, all_ii.shape[2] - 1
+    if any(ii.shape != all_ii.shape[1:] for ii in positive_iis + negative_iis):
+        raise ValueError("All integral images must have identical dimensions.")
 
     features = _create_features(
-        img_height,
-        img_width,
+        height,
+        width,
         min_feature_width,
         max_feature_width,
         min_feature_height,
         max_feature_height,
-        feature_mode=feature_mode,
+        feature_mode,
+        max_features=max_features,
+        random_seed=random_seed,
     )
-    if not features:
-        # Fallback to wider feature bounds if window is small
-        features = _create_features(
-            img_height,
-            img_width,
-            1,
-            max(2, img_width - 1),
-            1,
-            max(2, img_height - 1),
-            feature_mode=feature_mode,
-        )
-    num_features = len(features)
-    feature_indexes = list(range(num_features))
+    # Matrix shape: samples x candidate features. float32 keeps memory moderate.
+    scores = np.empty((all_ii.shape[0], len(features)), dtype=np.float32)
+    for j, feature in enumerate(features):
+        scores[:, j] = feature.get_score_batch(all_ii)
 
-    num_classifiers = (
-        num_features
-        if num_classifiers == -1
-        else min(int(num_classifiers), num_features)
+    n_pos, n_neg = len(positive_iis), len(negative_iis)
+    labels = np.concatenate(
+        [np.ones(n_pos, dtype=np.int8), -np.ones(n_neg, dtype=np.int8)]
+    )
+    weights = np.concatenate(
+        [np.full(n_pos, 0.5 / n_pos), np.full(n_neg, 0.5 / n_neg)]
+    ).astype(np.float64)
+    n_learners = (
+        len(features)
+        if num_classifiers is None or num_classifiers < 0
+        else min(int(num_classifiers), len(features))
     )
 
-    votes = np.zeros((num_imgs, num_features), dtype=np.float64)
-    for i in range(num_imgs):
-        votes[i, :] = np.array(
-            [feature.get_vote(images[i]) for feature in features], dtype=np.float64
+    # Feature order is reusable across boosting iterations.
+    order = np.argsort(scores, axis=0, kind="mergesort")
+    sorted_scores = np.take_along_axis(scores, order, axis=0)
+    sorted_labels = labels[order]
+    learners: list[HaarLikeFeature] = []
+    unavailable = np.zeros(len(features), dtype=bool)
+    eps = 1e-10
+
+    for _ in range(n_learners):
+        active_weights = weights.copy()
+        if weight_trimming_rate < 1.0:
+            ranked = np.argsort(active_weights)[::-1]
+            cumulative = np.cumsum(active_weights[ranked])
+            keep_count = int(
+                np.searchsorted(cumulative, weight_trimming_rate, side="left") + 1
+            )
+            keep = np.zeros(len(weights), dtype=bool)
+            keep[ranked[:keep_count]] = True
+            for cls in (-1, 1):
+                class_idx = np.flatnonzero(labels == cls)
+                if class_idx.size and not np.any(keep[class_idx]):
+                    keep[class_idx[np.argmax(active_weights[class_idx])]] = True
+            active_weights *= keep
+        active_weights /= max(active_weights.sum(), eps)
+        sw = active_weights[order]
+        pos_w = np.where(sorted_labels == 1, sw, 0.0)
+        neg_w = np.where(sorted_labels == -1, sw, 0.0)
+        cp = np.vstack([np.zeros((1, len(features))), np.cumsum(pos_w, axis=0)])
+        cn = np.vstack([np.zeros((1, len(features))), np.cumsum(neg_w, axis=0)])
+        tp, tn = pos_w.sum(axis=0), neg_w.sum(axis=0)
+        err_pos_right = cp + (tn[None, :] - cn)
+        err_pos_left = cn + (tp[None, :] - cp)
+        valid = np.zeros_like(err_pos_right, dtype=bool)
+        valid[0, :] = True
+        valid[-1, :] = True
+        if labels.size > 1:
+            valid[1:-1, :] = sorted_scores[:-1, :] < sorted_scores[1:, :]
+        err_pos_right[~valid] = np.inf
+        err_pos_left[~valid] = np.inf
+        err_pos_right[:, unavailable] = np.inf
+        err_pos_left[:, unavailable] = np.inf
+
+        right_idx = np.unravel_index(np.argmin(err_pos_right), err_pos_right.shape)
+        left_idx = np.unravel_index(np.argmin(err_pos_left), err_pos_left.shape)
+        if err_pos_right[right_idx] <= err_pos_left[left_idx]:
+            split, feature_idx = right_idx
+            polarity = 1
+            error = float(err_pos_right[right_idx])
+        else:
+            split, feature_idx = left_idx
+            polarity = -1
+            error = float(err_pos_left[left_idx])
+
+        if not np.isfinite(error) or error >= 0.5 - 1e-12:
+            break  # No remaining weak learner is better than random guessing.
+
+        column = sorted_scores[:, feature_idx]
+        if split == 0:
+            threshold = float(np.nextafter(column[0], -np.inf))
+        elif split == len(labels):
+            threshold = float(np.nextafter(column[-1], np.inf))
+        else:
+            prev_v = column[split - 1]
+            threshold = float(prev_v + (column[split] - prev_v) / 2.0)
+
+        alpha = 0.5 * np.log((1.0 - max(error, eps)) / max(error, eps))
+        learner = HaarLikeFeature(
+            features[feature_idx].type,
+            features[feature_idx].top_left,
+            features[feature_idx].width,
+            features[feature_idx].height,
+            threshold,
+            polarity,
+            float(alpha),
         )
+        learners.append(learner)
+        predictions = learner.predict_from_score(scores[:, feature_idx]).astype(np.int8)
+        weights *= np.exp(-alpha * labels * predictions)
+        weights /= max(weights.sum(), eps)
+        unavailable[feature_idx] = True
 
-    classifiers: list[HaarLikeFeature] = []
-    eps = 1e-12
+        if error <= eps:
+            break  # Perfect stump on this training sample; further rounds add no value.
 
-    for _ in range(num_classifiers):
-        if not feature_indexes:
-            break
-
-        weights *= 1.0 / np.sum(weights)
-
-        active_votes = votes[:, feature_indexes]
-        mismatches = (active_votes != labels[:, None]).astype(np.float64)
-        classification_errors = weights @ mismatches
-
-        min_error_idx = int(np.argmin(classification_errors))
-        best_error = float(
-            np.clip(classification_errors[min_error_idx], eps, 1.0 - eps)
+    if not learners:
+        raise RuntimeError(
+            "AdaBoost could not find a Haar weak learner better than chance. "
+            "Check the positive/negative data and feature-size settings."
         )
-        best_feature_idx = feature_indexes[min_error_idx]
-
-        best_feature = features[best_feature_idx]
-        feature_weight = 0.5 * float(np.log((1.0 - best_error) / best_error))
-        best_feature.weight = feature_weight
-
-        classifiers.append(best_feature)
-
-        wrong_mask = labels != votes[:, best_feature_idx]
-        factor_wrong = np.sqrt((1.0 - best_error) / best_error)
-        factor_right = np.sqrt(best_error / (1.0 - best_error))
-        weights = np.where(wrong_mask, weights * factor_wrong, weights * factor_right)
-
-        feature_indexes.pop(min_error_idx)
-
-    return classifiers
+    return learners
 
 
 def ensemble_vote(int_img: np.ndarray, classifiers: list[HaarLikeFeature]) -> int:
@@ -490,7 +580,7 @@ def evaluate_thresholds(
 
 @dataclass
 class CascadeStage:
-    """A single boosted stage in a Viola–Jones cascade."""
+    """A single boosted stage in a Viola-Jones cascade."""
 
     stage_index: int
     classifiers: list[HaarLikeFeature] = field(default_factory=list)
@@ -507,13 +597,13 @@ class CascadeStage:
 
 @dataclass
 class ViolaJonesCascadeModel:
-    """Complete multi-stage Viola–Jones Haar + AdaBoost cascade model."""
+    """Complete multi-stage Viola-Jones Haar + AdaBoost cascade model."""
 
     window_width: int = 24
     window_height: int = 24
     feature_type: str = "HAAR"
     stage_type: str = "BOOST"
-    boost_type: str = "GAB"
+    boost_type: str = "DISCRETE"
     feature_mode: str = "BASIC"
     stages: list[CascadeStage] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
@@ -587,7 +677,7 @@ class ViolaJonesCascadeModel:
 
     @classmethod
     def load_xml(cls, xml_path: str | Path) -> ViolaJonesCascadeModel:
-        """Load a custom-trained Viola–Jones cascade XML file."""
+        """Load a custom-trained Viola-Jones cascade XML file."""
         path = Path(xml_path)
         if not path.exists():
             raise FileNotFoundError(f"Cascade XML not found: {path}")
@@ -596,19 +686,19 @@ class ViolaJonesCascadeModel:
         root = tree.getroot()
         cascade_el = root.find("cascade")
         if cascade_el is None:
-            raise ValueError(f"Invalid Viola–Jones cascade XML: {path}")
+            raise ValueError(f"Invalid Viola-Jones cascade XML: {path}")
 
         type_id = cascade_el.attrib.get("type_id", "")
         if type_id != "forensics-viola-jones-cascade":
             raise ValueError(
-                f"XML file {path.name} is not a custom Forensics Viola–Jones cascade."
+                f"XML file {path.name} is not a custom Forensics Viola-Jones cascade."
             )
 
         width = int(cascade_el.findtext("width", "24"))
         height = int(cascade_el.findtext("height", "24"))
         stage_type = cascade_el.findtext("stageType", "BOOST")
         feature_type = cascade_el.findtext("featureType", "HAAR")
-        boost_type = cascade_el.findtext("boostType", "GAB")
+        boost_type = cascade_el.findtext("boostType", "DISCRETE")
         feature_mode = cascade_el.findtext("featureMode", "BASIC")
 
         stages: list[CascadeStage] = []
@@ -711,45 +801,50 @@ def validate_cascade_dataset(
     annotations_path: str | Path | None = None,
     window_size: tuple[int, int] = (24, 24),
 ) -> dict[str, Any]:
-    """Step 1: Validate positive/negative folders, annotations, and dimensions."""
-    pos_folder = Path(positive_dir)
-    neg_folder = Path(negative_dir)
-    if not pos_folder.exists() or not pos_folder.is_dir():
+    """Validate folders and positive annotations before sample generation."""
+    pos_folder, neg_folder = Path(positive_dir), Path(negative_dir)
+    if not pos_folder.is_dir():
         raise ValueError(f"Positive images folder does not exist: {pos_folder}")
-    if not neg_folder.exists() or not neg_folder.is_dir():
+    if not neg_folder.is_dir():
         raise ValueError(f"Negative images folder does not exist: {neg_folder}")
+    if min(window_size) < 8:
+        raise ValueError("Training window dimensions must each be at least 8 pixels.")
 
-    if window_size[0] < 8 or window_size[1] < 8:
-        raise ValueError("Training window dimensions must be at least 8 × 8 pixels.")
-
-    pos_files = sorted(
-        f
-        for f in pos_folder.iterdir()
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-    )
-    neg_files = sorted(
-        f
-        for f in neg_folder.iterdir()
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-    )
+    pos_files = [
+        p
+        for p in pos_folder.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+    neg_files = [
+        p
+        for p in neg_folder.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+    if not pos_files:
+        raise ValueError(f"No positive images found in {pos_folder}.")
+    if not neg_files:
+        raise ValueError(f"No negative images found in {neg_folder}.")
 
     annotated_boxes = 0
     if annotations_path:
         entries = parse_annotations_file(annotations_path, base_dir=pos_folder)
+        missing = [str(path) for path, _ in entries if not path.is_file()]
         annotated_boxes = sum(len(boxes) for _, boxes in entries)
-        if annotated_boxes == 0:
-            raise ValueError("Annotation file contains no valid bounding boxes.")
-    elif not pos_files:
-        raise ValueError(f"No positive image files found in {pos_folder}.")
-
-    if not neg_files:
-        raise ValueError(f"No negative image files found in {neg_folder}.")
+        if not entries or annotated_boxes == 0:
+            raise ValueError(
+                "The annotation file contains no usable face bounding boxes."
+            )
+        if missing:
+            raise ValueError(
+                f"{len(missing)} annotated image path(s) could not be resolved; "
+                f"first: {missing[0]}"
+            )
 
     return {
         "positive_files": len(pos_files),
         "negative_files": len(neg_files),
         "annotated_boxes": annotated_boxes,
-        "window_size": window_size,
+        "window_size": tuple(window_size),
     }
 
 
@@ -759,66 +854,72 @@ def generate_positive_samples(
     window_size: tuple[int, int] = (24, 24),
     max_samples: int = 100,
     vec_output_path: str | Path | None = None,
+    *,
+    random_seed: int = 42,
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Step 2: Generate normalized positive patches and integral images."""
+    """Extract annotated face regions (or already-cropped face images).
+
+    For WIDER FACE, provide its converted bounding-box annotation file.
+    Without annotations, every image in ``positive_dir`` is assumed to be a
+    single face crop (appropriate for an LFW-style cropped-face folder).
+    """
     pos_folder = Path(positive_dir)
-    patches: list[np.ndarray] = []
-    integral_images: list[np.ndarray] = []
+    rng = np.random.default_rng(random_seed)
+    candidates: list[tuple[Path, tuple[int, int, int, int] | None]] = []
 
     if annotations_path:
-        entries = parse_annotations_file(annotations_path, base_dir=pos_folder)
-        for img_path, boxes in entries:
-            if not img_path.exists():
-                continue
-            try:
-                with Image.open(img_path) as img:
-                    gray = img.convert("L")
-                    for x, y, w, h in boxes:
-                        if w <= 0 or h <= 0:
-                            continue
-                        crop = gray.crop((x, y, x + w, y + h)).resize(
-                            window_size, Image.Resampling.BILINEAR
-                        )
-                        arr = _normalize_patch(np.asarray(crop, dtype=np.float64))
-                        ii = compute_integral_image(arr)
-                        max_ii = float(np.max(ii))
-                        if max_ii > 0:
-                            ii = ii / max_ii
-                        patches.append(arr)
-                        integral_images.append(ii)
-                        if len(integral_images) >= max_samples:
-                            break
-            except OSError:
-                continue
-            if len(integral_images) >= max_samples:
-                break
+        for image_path, boxes in parse_annotations_file(
+            annotations_path, base_dir=pos_folder
+        ):
+            for box in boxes:
+                candidates.append((image_path, box))
     else:
-        files = sorted(
-            f
-            for f in pos_folder.iterdir()
-            if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-        )[:max_samples]
-        for file_path in files:
-            try:
-                with Image.open(file_path) as img:
-                    gray = img.convert("L").resize(
-                        window_size, Image.Resampling.BILINEAR
-                    )
-                    arr = _normalize_patch(np.asarray(gray, dtype=np.float64))
-                    ii = compute_integral_image(arr)
-                    max_ii = float(np.max(ii))
-                    if max_ii > 0:
-                        ii = ii / max_ii
-                    patches.append(arr)
-                    integral_images.append(ii)
-            except OSError:
-                continue
+        files = [
+            p
+            for p in pos_folder.rglob("*")
+            if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+        ]
+        candidates = [(p, None) for p in files]
+
+    rng.shuffle(candidates)
+    if max_samples > 0:
+        candidates = candidates[:max_samples]
+
+    patches: list[np.ndarray] = []
+    integral_images: list[np.ndarray] = []
+    target_w, target_h = window_size
+    for image_path, box in candidates:
+        try:
+            with Image.open(image_path) as img:
+                gray = img.convert("L")
+                if box is not None:
+                    x, y, w, h = box
+                    if (
+                        w <= 0
+                        or h <= 0
+                        or x < 0
+                        or y < 0
+                        or x + w > gray.width
+                        or y + h > gray.height
+                    ):
+                        continue
+                    gray = gray.crop((x, y, x + w, y + h))
+                if gray.width == 0 or gray.height == 0:
+                    continue
+                # The coursework/reference notebook uses direct resizing to a
+                # fixed PCA/feature window; preserve that convention here.
+                gray = gray.resize((target_w, target_h), Image.Resampling.BILINEAR)
+                arr = np.asarray(gray, dtype=np.uint8)
+        except (OSError, ValueError):
+            continue
+        patches.append(_normalize_patch(arr))
+        integral_images.append(compute_integral_image(_normalize_patch(arr)))
 
     if vec_output_path and patches:
         vec_path = Path(vec_output_path)
         vec_path.parent.mkdir(parents=True, exist_ok=True)
+        # This is a NumPy patch archive, not OpenCV's binary .vec format.
         np.save(vec_path, np.stack(patches, axis=0))
-
     return patches, integral_images
 
 
@@ -826,52 +927,72 @@ def generate_negative_samples(
     negative_dir: str | Path,
     window_size: tuple[int, int] = (24, 24),
     max_samples: int = 100,
+    *,
+    random_seed: int = 42,
+    patches_per_image: int | None = None,
 ) -> tuple[list[np.ndarray], list[np.ndarray]]:
-    """Extract normalized negative patches and integral images from backgrounds."""
+    """Draw diverse random non-face windows from background images.
+
+    Negative directories should contain background-only images. The sampler
+    randomises image order and crop locations; it does not assume that a
+    single image's top-left non-overlapping tiles represent the whole set.
+    """
     neg_folder = Path(negative_dir)
-    files = sorted(
-        f
-        for f in neg_folder.iterdir()
-        if f.is_file() and f.suffix.lower() in IMAGE_EXTENSIONS
-    )
+    files = [
+        p
+        for p in neg_folder.rglob("*")
+        if p.is_file() and p.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+    if not files:
+        raise ValueError(f"No negative/background images found in {neg_folder}.")
+    rng = np.random.default_rng(random_seed)
+    rng.shuffle(files)
+    target_w, target_h = window_size
     patches: list[np.ndarray] = []
     integral_images: list[np.ndarray] = []
-    w, h = window_size
-
-    for file_path in files:
+    usable_files: list[Path] = []
+    for path in files:
         try:
-            with Image.open(file_path) as img:
-                gray = img.convert("L")
-                if gray.width > w * 2 and gray.height > h * 2:
-                    # Extract non-overlapping patches from larger background images
-                    for top in range(0, gray.height - h + 1, h):
-                        for left in range(0, gray.width - w + 1, w):
-                            crop = gray.crop((left, top, left + w, top + h))
-                            arr = _normalize_patch(np.asarray(crop, dtype=np.float64))
-                            ii = compute_integral_image(arr)
-                            max_ii = float(np.max(ii))
-                            if max_ii > 0:
-                                ii = ii / max_ii
-                            patches.append(arr)
-                            integral_images.append(ii)
-                            if len(integral_images) >= max_samples:
-                                break
-                        if len(integral_images) >= max_samples:
-                            break
-                else:
-                    resized = gray.resize(window_size, Image.Resampling.BILINEAR)
-                    arr = _normalize_patch(np.asarray(resized, dtype=np.float64))
-                    ii = compute_integral_image(arr)
-                    max_ii = float(np.max(ii))
-                    if max_ii > 0:
-                        ii = ii / max_ii
-                    patches.append(arr)
-                    integral_images.append(ii)
-        except OSError:
+            with Image.open(path) as img:
+                img.verify()
+            usable_files.append(path)
+        except (OSError, ValueError):
             continue
-        if len(integral_images) >= max_samples:
-            break
+    if not usable_files:
+        raise ValueError("None of the negative images could be decoded.")
 
+    # Round-robin allocation across background images improves diversity while
+    # streaming from disk instead of keeping an entire image collection in RAM.
+    per_image = patches_per_image or max(
+        1, int(np.ceil(max_samples / len(usable_files)))
+    )
+    for _round in range(per_image):
+        order = list(range(len(usable_files)))
+        rng.shuffle(order)
+        for idx in order:
+            if len(patches) >= max_samples:
+                break
+            try:
+                with Image.open(usable_files[idx]) as img:
+                    gray = img.convert("L")
+                    if gray.width >= target_w and gray.height >= target_h:
+                        left = int(rng.integers(0, gray.width - target_w + 1))
+                        top = int(rng.integers(0, gray.height - target_h + 1))
+                        crop = gray.crop((left, top, left + target_w, top + target_h))
+                    else:
+                        crop = gray.resize(
+                            (target_w, target_h), Image.Resampling.BILINEAR
+                        )
+                    arr = np.asarray(crop, dtype=np.uint8)
+            except (OSError, ValueError):
+                continue
+            norm = _normalize_patch(arr)
+            patches.append(norm)
+            integral_images.append(compute_integral_image(norm))
+        if len(patches) >= max_samples:
+            break
+    if len(patches) < min(max_samples, 2):
+        raise ValueError("At least two usable negative patches are required.")
     return patches, integral_images
 
 
@@ -922,6 +1043,43 @@ def create_synthetic_face_nonface_dataset(
     }
 
 
+def _stage_threshold_for_hit_rate(
+    scores: np.ndarray, target_hit_rate: float
+) -> tuple[float, float]:
+    """Choose an inclusive threshold retaining at least target_hit_rate positives."""
+    values = np.asarray(scores, dtype=np.float64)
+    if values.size == 0:
+        raise ValueError("Cannot set a stage threshold without positive samples.")
+    required = max(1, int(np.ceil(target_hit_rate * values.size)))
+    threshold = float(np.sort(values)[values.size - required])
+    achieved = float(np.mean(values >= threshold))
+    return threshold, achieved
+
+
+def evaluate_cascade(
+    model: ViolaJonesCascadeModel,
+    positive_iis: list[np.ndarray],
+    negative_iis: list[np.ndarray],
+) -> dict[str, float | int]:
+    """Evaluate full cascade decisions on fixed-size positive/negative patches."""
+    pos_pred = [model.evaluate_window(ii)[0] for ii in positive_iis]
+    neg_pred = [model.evaluate_window(ii)[0] for ii in negative_iis]
+    tp = int(sum(pos_pred))
+    fn = len(pos_pred) - tp
+    fp = int(sum(neg_pred))
+    tn = len(neg_pred) - fp
+    return {
+        "tp": tp,
+        "fn": fn,
+        "fp": fp,
+        "tn": tn,
+        "face_recall_pct": 100.0 * tp / max(1, tp + fn),
+        "nonface_recall_pct": 100.0 * tn / max(1, tn + fp),
+        "accuracy_pct": 100.0 * (tp + tn) / max(1, tp + tn + fp + fn),
+        "false_alarm_rate": fp / max(1, fp + tn),
+    }
+
+
 def train_viola_jones_cascade(
     positive_dir: str | Path,
     negative_dir: str | Path,
@@ -932,27 +1090,63 @@ def train_viola_jones_cascade(
     output_xml_path: str | Path = DEFAULT_CASCADE_XML,
     window_width: int = 24,
     window_height: int = 24,
-    num_pos: int = 50,
-    num_neg: int = 50,
-    num_stages: int = 3,
-    max_weak_count: int = 5,
-    min_hit_rate: float = 0.995,
+    num_pos: int = 500,
+    num_neg: int = 1000,
+    num_stages: int = 5,
+    max_weak_count: int = 10,
+    min_hit_rate: float = 0.95,
     max_false_alarm_rate: float = 0.5,
-    weight_trimming_rate: float = 0.95,
+    weight_trimming_rate: float = 1.0,
     max_weak_tree_depth: int = 1,
-    boost_type: str = "GAB",
+    boost_type: str = "DISCRETE",
     feature_mode: str = "BASIC",
-    min_feature_width: int = 8,
-    max_feature_width: int = 10,
-    min_feature_height: int = 8,
-    max_feature_height: int = 10,
+    min_feature_width: int = 4,
+    max_feature_width: int = 12,
+    min_feature_height: int = 4,
+    max_feature_height: int = 12,
+    max_features: int = 3000,
+    random_seed: int = 42,
 ) -> dict[str, Any]:
-    """Execute the 5-step Viola–Jones cascade training workflow and export models."""
+    """Train a custom multi-stage Haar + discrete-AdaBoost cascade.
+
+    Stages are trained sequentially on positive and negative training windows
+    that survive all previous stages. The requested hit rate is used to set each
+    stage threshold; the trainer chooses the shortest weak-classifier prefix
+    meeting the false-alarm target, or reports when the weak-learner budget is
+    insufficient. Negative patches are randomly sampled from the supplied
+    background images; full-image hard-negative mining is not performed here.
+
+    This is a ForensicsApp-specific model format (XML + JSON), not an OpenCV
+    ``CascadeClassifier`` XML or ONNX model. Inference must use the matching
+    custom detector implementation.
+    """
     t_start = time.perf_counter()
     logs: list[str] = []
     window_size = (int(window_width), int(window_height))
+    if window_width < 8 or window_height < 8:
+        raise ValueError("Window width and height must be at least 8 pixels.")
+    if num_stages < 1 or max_weak_count < 1 or num_pos < 2 or num_neg < 2:
+        raise ValueError(
+            "Use at least 2 positive/negative samples, 1 stage and 1 weak learner."
+        )
+    if not 0.0 < min_hit_rate <= 1.0:
+        raise ValueError("min_hit_rate must be in (0, 1].")
+    if not 0.0 < max_false_alarm_rate < 1.0:
+        raise ValueError("max_false_alarm_rate must be in (0, 1).")
+    if not 0.0 < weight_trimming_rate <= 1.0:
+        raise ValueError("weight_trimming_rate must be in (0, 1].")
+    if max_weak_tree_depth != 1:
+        raise ValueError(
+            "This implementation uses AdaBoost decision stumps; "
+            "max_weak_tree_depth must be 1."
+        )
+    if boost_type.upper() not in {"DISCRETE", "DAB"}:
+        raise ValueError(
+            "This implementation supports discrete AdaBoost only "
+            "(boost_type='DISCRETE')."
+        )
+    boost_type = "DISCRETE"
 
-    # Step 1: Dataset validation
     validation = validate_cascade_dataset(
         positive_dir,
         negative_dir,
@@ -960,119 +1154,178 @@ def train_viola_jones_cascade(
         window_size=window_size,
     )
     logs.append(
-        f"[Step 1] Validated dataset: {validation['positive_files']} pos files, "
-        f"{validation['negative_files']} neg files, "
-        f"window={window_width}x{window_height}"
-    )
-
-    # Check if external OpenCV 3.4 cascade training utilities exist
-    createsamples_bin = shutil.which("opencv_createsamples")
-    traincascade_bin = shutil.which("opencv_traincascade")
-    logs.append(
-        f"[Env] External OpenCV 3.4 binaries: createsamples={bool(createsamples_bin)}, "
-        f"traincascade={bool(traincascade_bin)} (using built-in Haar+AdaBoost engine)"
+        f"[Dataset] {validation['positive_files']} positive files, "
+        f"{validation['negative_files']} negative files, "
+        f"{validation['annotated_boxes']} annotated faces; "
+        f"window={window_width}x{window_height}."
     )
 
     out_xml = Path(output_xml_path)
     out_dir = out_xml.parent
     out_dir.mkdir(parents=True, exist_ok=True)
-    vec_path = out_dir / "samples.vec.npy"
+    patch_archive = out_dir / "positive_patches.npy"
 
-    # Step 2: Positive & negative sample generation
+    # Prepare positive and negative windows with reproducible seed.
     pos_patches, pos_iis = generate_positive_samples(
         positive_dir,
-        annotations_path=annotations_path,
-        window_size=window_size,
-        max_samples=num_pos,
-        vec_output_path=vec_path,
+        annotations_path,
+        window_size,
+        num_pos,
+        patch_archive,
+        random_seed=random_seed,
     )
     neg_patches, neg_iis = generate_negative_samples(
         negative_dir,
-        window_size=window_size,
-        max_samples=num_neg,
+        window_size,
+        num_neg,
+        random_seed=random_seed + 1,
     )
-    if not pos_iis or not neg_iis:
-        raise ValueError("Insufficient valid positive or negative samples loaded.")
-
+    if len(pos_iis) < 2 or len(neg_iis) < 2:
+        raise ValueError(
+            f"Not enough usable patches: {len(pos_iis)} positive, "
+            f"{len(neg_iis)} negative. Use more images or fix the annotation file."
+        )
     logs.append(
-        f"[Step 2] Generated {len(pos_iis)} positive and "
-        f"{len(neg_iis)} negative integral images."
+        f"[Samples] Prepared {len(pos_iis)} positive and "
+        f"{len(neg_iis)} negative patches."
     )
+    if len(pos_iis) < num_pos:
+        logs.append(
+            f"[Dataset] WARNING: requested {num_pos} positive patches "
+            f"but only {len(pos_iis)} were available."
+        )
+    if len(neg_iis) < num_neg:
+        logs.append(
+            f"[Dataset] WARNING: requested {num_neg} negative patches "
+            f"but only {len(neg_iis)} could be sampled."
+        )
 
-    # Adjust feature dimensions safely to fit within the training window
-    eff_min_fw = min(min_feature_width, max(2, window_width - 4))
-    eff_max_fw = min(max_feature_width, max(eff_min_fw + 2, window_width - 1))
-    eff_min_fh = min(min_feature_height, max(2, window_height - 4))
-    eff_max_fh = min(max_feature_height, max(eff_min_fh + 2, window_height - 1))
+    # The maximum feature dimensions must fit inside the fixed training window.
+    min_fw = max(2, min(int(min_feature_width), window_width - 1))
+    min_fh = max(2, min(int(min_feature_height), window_height - 1))
+    max_fw = max(min_fw, min(int(max_feature_width), window_width))
+    max_fh = max(min_fh, min(int(max_feature_height), window_height))
 
-    # Step 3 & 4: Cascade training & stage monitoring
     stages: list[CascadeStage] = []
-    active_neg_iis = list(neg_iis)
+    active_pos = list(pos_iis)
+    active_neg = list(neg_iis)
+    stage_records: list[dict[str, Any]] = []
 
     for stage_idx in range(int(num_stages)):
-        stage_t0 = time.perf_counter()
-        if not active_neg_iis:
-            active_neg_iis = list(neg_iis)
+        if len(active_pos) < 2:
+            logs.append(
+                f"[Stage {stage_idx + 1}] Stopped: fewer than two positive windows "
+                "survive previous stages."
+            )
+            break
+        if len(active_neg) < 2:
+            logs.append(
+                f"[Stage {stage_idx + 1}] Stopped: fewer than two negative windows "
+                "survive previous stages."
+            )
+            break
 
-        stage_classifiers = learn(
-            pos_iis,
-            active_neg_iis,
+        stage_start = time.perf_counter()
+        learners = learn(
+            active_pos,
+            active_neg,
             num_classifiers=max_weak_count,
-            min_feature_width=eff_min_fw,
-            max_feature_width=eff_max_fw,
-            min_feature_height=eff_min_fh,
-            max_feature_height=eff_max_fh,
+            min_feature_width=min_fw,
+            max_feature_width=max_fw,
+            min_feature_height=min_fh,
+            max_feature_height=max_fh,
             feature_mode=feature_mode,
+            max_features=max_features,
+            weight_trimming_rate=weight_trimming_rate,
+            random_seed=random_seed + stage_idx,
         )
 
-        pos_scores = np.array(
-            [sum(c.get_vote(ii) for c in stage_classifiers) for ii in pos_iis],
-            dtype=np.float64,
-        )
-        neg_scores = np.array(
-            [sum(c.get_vote(ii) for c in stage_classifiers) for ii in active_neg_iis],
-            dtype=np.float64,
-        )
+        # Select the shortest prefix meeting the requested false-alarm target,
+        # while setting its threshold to retain at least min_hit_rate positives.
+        chosen: tuple[list[HaarLikeFeature], float, float, float] | None = None
+        prefix_candidates: list[
+            tuple[float, int, list[HaarLikeFeature], float, float]
+        ] = []
+        for count in range(1, len(learners) + 1):
+            prefix = learners[:count]
+            pos_scores = np.asarray(
+                [sum(c.get_vote(ii) for c in prefix) for ii in active_pos]
+            )
+            neg_scores = np.asarray(
+                [sum(c.get_vote(ii) for c in prefix) for ii in active_neg]
+            )
+            threshold, achieved_hit = _stage_threshold_for_hit_rate(
+                pos_scores, min_hit_rate
+            )
+            fa_rate = float(np.mean(neg_scores >= threshold))
+            prefix_candidates.append((fa_rate, count, prefix, threshold, achieved_hit))
+            if fa_rate <= max_false_alarm_rate:
+                chosen = (prefix, threshold, achieved_hit, fa_rate)
+                break
+        if chosen is None:
+            # The max weak-learner budget was insufficient. Retain the prefix
+            # with the lowest observed false-alarm rate, not a bogus threshold.
+            best = min(prefix_candidates, key=lambda item: (item[0], item[1]))
+            chosen = (best[2], best[3], best[4], best[0])
+            logs.append(
+                f"[Stage {stage_idx + 1}] WARNING: false-alarm target "
+                f"{max_false_alarm_rate:.3f} not reached; best observed {best[0]:.3f} "
+                f"with {best[1]} weak learner(s)."
+            )
 
-        # Choose stage threshold to satisfy min_hit_rate on positive training samples
-        sorted_pos = np.sort(pos_scores)
-        cutoff_idx = max(
-            0,
-            min(
-                len(sorted_pos) - 1,
-                int(np.floor((1.0 - min_hit_rate) * len(sorted_pos))),
-            ),
-        )
-        stage_threshold = min(0.0, float(sorted_pos[cutoff_idx]) - 1e-6)
-
-        hit_rate = float(np.mean(pos_scores >= stage_threshold))
-        fa_rate = float(np.mean(neg_scores >= stage_threshold))
-
+        stage_classifiers, stage_threshold, hit_rate, fa_rate = chosen
         stage = CascadeStage(
             stage_index=stage_idx,
-            classifiers=stage_classifiers,
-            stage_threshold=stage_threshold,
-            hit_rate=hit_rate,
-            false_alarm_rate=fa_rate,
+            classifiers=list(stage_classifiers),
+            stage_threshold=float(stage_threshold),
+            hit_rate=float(hit_rate),
+            false_alarm_rate=float(fa_rate),
         )
         stages.append(stage)
 
-        stage_dt = time.perf_counter() - stage_t0
+        # Carry forward only windows that pass this stage. This is essential
+        # for training later cascade stages on the hard examples that survive.
+        pos_scores = np.asarray([stage.score(ii) for ii in active_pos])
+        neg_scores = np.asarray([stage.score(ii) for ii in active_neg])
+        next_pos = [
+            ii for ii, score in zip(active_pos, pos_scores) if score >= stage_threshold
+        ]
+        next_neg = [
+            ii for ii, score in zip(active_neg, neg_scores) if score >= stage_threshold
+        ]
+        stage_time = time.perf_counter() - stage_start
+        stage_records.append(
+            {
+                "stage": stage_idx + 1,
+                "weak_classifiers": len(stage_classifiers),
+                "conditional_hit_rate": hit_rate,
+                "conditional_false_alarm_rate": fa_rate,
+                "positive_windows_before": len(active_pos),
+                "positive_windows_after": len(next_pos),
+                "negative_windows_before": len(active_neg),
+                "negative_windows_after": len(next_neg),
+                "duration_sec": round(stage_time, 4),
+            }
+        )
         logs.append(
-            f"[Stage {stage_idx + 1}/{num_stages}] "
-            f"weak_classifiers={len(stage_classifiers)}, "
-            f"hit_rate={hit_rate:.3f}, false_alarm={fa_rate:.3f}, time={stage_dt:.2f}s"
+            f"[Stage {stage_idx + 1}/{num_stages}] weak={len(stage_classifiers)}, "
+            f"hit={hit_rate:.3f}, false_alarm={fa_rate:.3f}, "
+            f"positives {len(active_pos)}->{len(next_pos)}, "
+            f"negatives {len(active_neg)}->{len(next_neg)}, time={stage_time:.2f}s."
         )
 
-        # Filter surviving false positives for subsequent stages if enough remain
-        surviving_negs = [
-            ii for ii, s in zip(active_neg_iis, neg_scores) if s >= stage_threshold
-        ]
-        if len(surviving_negs) >= 2:
-            active_neg_iis = surviving_negs
+        active_pos, active_neg = next_pos, next_neg
+        if not active_neg:
+            logs.append(
+                "[Cascade] All sampled training negatives are rejected; stopping early."
+            )
+            break
 
-        if fa_rate <= max_false_alarm_rate**num_stages and stage_idx >= 0:
-            pass
+    if not stages:
+        raise RuntimeError(
+            "No cascade stage could be trained. "
+            "Check the dataset and feature configuration."
+        )
 
     model = ViolaJonesCascadeModel(
         window_width=window_width,
@@ -1082,51 +1335,70 @@ def train_viola_jones_cascade(
         boost_type=boost_type,
         feature_mode=feature_mode,
         stages=stages,
+        metadata={
+            "format": "forensicsapp_custom_viola_jones_v2",
+            "training_algorithm": (
+                "Haar features + discrete AdaBoost decision stumps + cascade"
+            ),
+            "random_seed": random_seed,
+        },
     )
 
-    # Step 5: Model export (XML, JSON config, training log)
-    saved_xml = model.save_xml(out_xml)
-
-    all_clfs = model.all_classifiers
+    # Full cascade evaluation, not a flat vote across all weak classifiers.
+    train_metrics = evaluate_cascade(model, pos_iis, neg_iis)
     pos_test_iis = (
-        load_integral_images(pos_test_dir, window_size=window_size, max_samples=num_pos)
-        if pos_test_dir and Path(pos_test_dir).exists()
-        else None
+        load_integral_images(
+            pos_test_dir,
+            window_size=window_size,
+            max_samples=num_pos,
+            random_seed=random_seed + 2,
+        )
+        if pos_test_dir and Path(pos_test_dir).is_dir()
+        else []
     )
     neg_test_iis = (
-        load_integral_images(neg_test_dir, window_size=window_size, max_samples=num_neg)
-        if neg_test_dir and Path(neg_test_dir).exists()
+        load_integral_images(
+            neg_test_dir,
+            window_size=window_size,
+            max_samples=num_neg,
+            random_seed=random_seed + 3,
+        )
+        if neg_test_dir and Path(neg_test_dir).is_dir()
+        else []
+    )
+    test_metrics = (
+        evaluate_cascade(model, pos_test_iis, neg_test_iis)
+        if pos_test_iis and neg_test_iis
         else None
     )
 
+    # Keep the reference-notebook threshold sweep as a diagnostic for the
+    # flattened strong classifier, but report cascade metrics separately.
     threshold_eval = evaluate_thresholds(
-        pos_iis, neg_iis, pos_test_iis, neg_test_iis, all_clfs
+        pos_iis,
+        neg_iis,
+        pos_test_iis or None,
+        neg_test_iis or None,
+        model.all_classifiers,
     )
 
-    train_pos_votes = ensemble_vote_all(pos_iis, all_clfs)
-    train_neg_votes = ensemble_vote_all(neg_iis, all_clfs)
-    train_face_acc = 100.0 * sum(train_pos_votes) / len(pos_iis)
-    train_nonface_acc = 100.0 * (len(neg_iis) - sum(train_neg_votes)) / len(neg_iis)
-
-    test_face_acc: float | None = None
-    test_nonface_acc: float | None = None
-    if pos_test_iis:
-        test_pos_votes = ensemble_vote_all(pos_test_iis, all_clfs)
-        test_face_acc = 100.0 * sum(test_pos_votes) / len(pos_test_iis)
-    if neg_test_iis:
-        test_neg_votes = ensemble_vote_all(neg_test_iis, all_clfs)
-        test_nonface_acc = (
-            100.0 * (len(neg_test_iis) - sum(test_neg_votes)) / len(neg_test_iis)
-        )
-
+    saved_xml = model.save_xml(out_xml)
     duration = time.perf_counter() - t_start
     logs.append(
-        f"[Step 5] Exported cascade XML to {saved_xml} in {duration:.2f}s. "
-        f"Train Faces Acc: {train_face_acc:.1f}%, "
-        f"Train Non-Faces Acc: {train_nonface_acc:.1f}%"
+        f"[Evaluation] Train face recall={train_metrics['face_recall_pct']:.1f}%, "
+        f"train non-face recall={train_metrics['nonface_recall_pct']:.1f}%, "
+        f"train accuracy={train_metrics['accuracy_pct']:.1f}%."
     )
+    if test_metrics:
+        logs.append(
+            f"[Validation] Face recall={test_metrics['face_recall_pct']:.1f}%, "
+            f"non-face recall={test_metrics['nonface_recall_pct']:.1f}%, "
+            f"accuracy={test_metrics['accuracy_pct']:.1f}%."
+        )
+    logs.append(f"[Export] Saved custom cascade XML: {saved_xml}")
 
     config_data = {
+        "model_format": "ForensicsApp custom XML (not OpenCV CascadeClassifier XML)",
         "positive_dir": str(positive_dir),
         "negative_dir": str(negative_dir),
         "annotations_path": str(annotations_path) if annotations_path else None,
@@ -1135,30 +1407,48 @@ def train_viola_jones_cascade(
         "num_pos": len(pos_iis),
         "num_neg": len(neg_iis),
         "num_stages": len(stages),
-        "max_weak_count": max_weak_count,
-        "total_weak_classifiers": len(all_clfs),
+        "num_stages_requested": num_stages,
+        "num_stages_trained": len(stages),
+        "max_weak_count_per_stage": max_weak_count,
+        "total_weak_classifiers": len(model.all_classifiers),
         "feature_type": "HAAR",
         "stage_type": "BOOST",
         "boost_type": boost_type,
         "feature_mode": feature_mode,
-        "min_hit_rate": min_hit_rate,
-        "max_false_alarm_rate": max_false_alarm_rate,
+        "min_feature_width": min_fw,
+        "max_feature_width": max_fw,
+        "min_feature_height": min_fh,
+        "max_feature_height": max_fh,
+        "max_features_considered_per_stage": max_features,
+        "min_hit_rate_target": min_hit_rate,
+        "max_false_alarm_rate_target": max_false_alarm_rate,
         "weight_trimming_rate": weight_trimming_rate,
-        "max_weak_tree_depth": max_weak_tree_depth,
+        "weak_learner": "threshold-optimised decision stump",
+        "max_weak_tree_depth": 1,
+        "random_seed": random_seed,
+        "stage_metrics": stage_records,
+        "train_face_accuracy_pct": round(float(train_metrics["face_recall_pct"]), 2),
+        "train_nonface_accuracy_pct": round(
+            float(train_metrics["nonface_recall_pct"]), 2
+        ),
+        "train_accuracy_pct": round(float(train_metrics["accuracy_pct"]), 2),
+        "train_false_alarm_rate": round(float(train_metrics["false_alarm_rate"]), 6),
+        "test_face_accuracy_pct": round(float(test_metrics["face_recall_pct"]), 2)
+        if test_metrics
+        else None,
+        "test_nonface_accuracy_pct": round(float(test_metrics["nonface_recall_pct"]), 2)
+        if test_metrics
+        else None,
+        "test_accuracy_pct": round(float(test_metrics["accuracy_pct"]), 2)
+        if test_metrics
+        else None,
+        "test_false_alarm_rate": round(float(test_metrics["false_alarm_rate"]), 6)
+        if test_metrics
+        else None,
         "training_duration_sec": round(duration, 4),
-        "train_face_accuracy_pct": round(train_face_acc, 2),
-        "train_nonface_accuracy_pct": round(train_nonface_acc, 2),
-        "test_face_accuracy_pct": (
-            round(test_face_acc, 2) if test_face_acc is not None else None
-        ),
-        "test_nonface_accuracy_pct": (
-            round(test_nonface_acc, 2) if test_nonface_acc is not None else None
-        ),
     }
-
     config_path = out_dir / "training_config.json"
     config_path.write_text(json.dumps(config_data, indent=2), encoding="utf-8")
-
     log_path = out_dir / "training_log.txt"
     log_path.write_text("\n".join(logs) + "\n", encoding="utf-8")
 
@@ -1170,7 +1460,6 @@ def train_viola_jones_cascade(
         model=model,
         threshold_eval=threshold_eval,
     )
-
     return {
         "model": model,
         "xml_path": saved_xml,
@@ -1178,6 +1467,8 @@ def train_viola_jones_cascade(
         "log_path": log_path,
         "logs": logs,
         "config": config_data,
+        "train_metrics": train_metrics,
+        "test_metrics": test_metrics,
         "threshold_eval": threshold_eval,
         "summary_image": summary_image,
     }
@@ -1269,8 +1560,8 @@ def render_viola_jones_training_summary(
             color="#fdbb84",
         )
     ax_bar.set_title(
-        f"Viola–Jones AdaBoost Evaluation ({len(model.stages)} stage(s), "
-        f"{len(all_clfs)} weak classifiers)",
+        f"Flattened AdaBoost threshold diagnostic ({len(model.stages)} stage(s), "
+        f"{len(all_clfs)} weak clfs) — cascade metrics reported separately",
         fontsize=11,
     )
     ax_bar.set_xlabel("Decision Threshold")
@@ -1289,9 +1580,9 @@ def render_viola_jones_training_summary(
 def ask_viola_jones_training_parameters(
     parent: tk.Misc,
 ) -> dict[str, Any] | None:
-    """Display configuration dialog for Viola–Jones cascade training."""
+    """Display configuration dialog for Viola-Jones cascade training."""
     dialog = tk.Toplevel(parent)
-    dialog.title("Viola–Jones Cascade Trainer")
+    dialog.title("Viola-Jones Cascade Trainer")
     dialog.transient(parent)
     dialog.resizable(False, False)
     dialog.grab_set()
@@ -1299,22 +1590,30 @@ def ask_viola_jones_training_parameters(
     pos_dir_var = tk.StringVar(value="")
     ann_file_var = tk.StringVar(value="")
     neg_dir_var = tk.StringVar(value="")
+    pos_test_dir_var = tk.StringVar(value="")
+    neg_test_dir_var = tk.StringVar(value="")
     output_xml_var = tk.StringVar(value=str(DEFAULT_CASCADE_XML))
 
     win_w_var = tk.StringVar(value="24")
     win_h_var = tk.StringVar(value="24")
-    num_pos_var = tk.StringVar(value="20")
-    num_neg_var = tk.StringVar(value="20")
+    num_pos_var = tk.StringVar(value="500")
+    num_neg_var = tk.StringVar(value="1000")
 
     # Advanced Cascade Parameters (Plan Section 2.B)
-    num_stages_var = tk.StringVar(value="3")
-    boost_type_var = tk.StringVar(value="GAB")
-    min_hit_rate_var = tk.StringVar(value="0.995")
+    num_stages_var = tk.StringVar(value="5")
+    boost_type_var = tk.StringVar(value="DISCRETE")
+    min_hit_rate_var = tk.StringVar(value="0.95")
     max_fa_rate_var = tk.StringVar(value="0.5")
-    max_weak_var = tk.StringVar(value="5")
-    weight_trim_var = tk.StringVar(value="0.95")
+    max_weak_var = tk.StringVar(value="10")
+    weight_trim_var = tk.StringVar(value="1.0")
     tree_depth_var = tk.StringVar(value="1")
     feature_mode_var = tk.StringVar(value="BASIC")
+    max_features_var = tk.StringVar(value="3000")
+    random_seed_var = tk.StringVar(value="42")
+    min_feature_width_var = tk.StringVar(value="4")
+    max_feature_width_var = tk.StringVar(value="12")
+    min_feature_height_var = tk.StringVar(value="4")
+    max_feature_height_var = tk.StringVar(value="12")
 
     main_frame = ttk.Frame(dialog, padding=12)
     main_frame.pack(fill="both", expand=True)
@@ -1356,7 +1655,7 @@ def ask_viola_jones_training_parameters(
     def _generate_demo_data() -> None:
         demo_root = Path("datasets/viola_jones_demo")
         paths = create_synthetic_face_nonface_dataset(
-            demo_root, window_size=(24, 24), n_pos=20, n_neg=20
+            demo_root, window_size=(24, 24), n_pos=40, n_neg=80
         )
         pos_dir_var.set(str(paths["pos_train"]))
         neg_dir_var.set(str(paths["neg_train"]))
@@ -1395,24 +1694,58 @@ def ask_viola_jones_training_parameters(
         command=lambda: _browse_dir(neg_dir_var, "Select negative images folder"),
     ).grid(row=2, column=2, pady=3)
 
-    ttk.Label(ds_frame, text="Output cascade XML:").grid(
+    ttk.Label(ds_frame, text="Validation face patches (optional):").grid(
         row=3, column=0, sticky="w", pady=3
     )
-    ttk.Entry(ds_frame, textvariable=output_xml_var, width=38).grid(
+    ttk.Entry(ds_frame, textvariable=pos_test_dir_var, width=38).grid(
         row=3, column=1, padx=6, pady=3
     )
+    ttk.Button(
+        ds_frame,
+        text="Browse…",
+        command=lambda: _browse_dir(pos_test_dir_var, "Select validation face patches"),
+    ).grid(row=3, column=2, pady=3)
+
+    ttk.Label(ds_frame, text="Validation non-face patches (optional):").grid(
+        row=4, column=0, sticky="w", pady=3
+    )
+    ttk.Entry(ds_frame, textvariable=neg_test_dir_var, width=38).grid(
+        row=4, column=1, padx=6, pady=3
+    )
+    ttk.Button(
+        ds_frame,
+        text="Browse…",
+        command=lambda: _browse_dir(
+            neg_test_dir_var, "Select validation non-face patches"
+        ),
+    ).grid(row=4, column=2, pady=3)
+
+    ttk.Label(ds_frame, text="Output custom cascade XML:").grid(
+        row=5, column=0, sticky="w", pady=3
+    )
+    ttk.Entry(ds_frame, textvariable=output_xml_var, width=38).grid(
+        row=5, column=1, padx=6, pady=3
+    )
     ttk.Button(ds_frame, text="Browse…", command=_browse_xml).grid(
-        row=3, column=2, pady=3
+        row=5, column=2, pady=3
     )
 
     ttk.Button(
         ds_frame,
-        text="Prepare Built-in Demo Face/Non-Face Dataset",
+        text="Generate tiny demo dataset (smoke test only)",
         command=_generate_demo_data,
-    ).grid(row=4, column=0, columnspan=3, sticky="ew", pady=(6, 2))
+    ).grid(row=6, column=0, columnspan=3, sticky="ew", pady=(6, 2))
+    ttk.Label(
+        ds_frame,
+        text=(
+            "Use cropped face images or supply bounding-box annotations. "
+            "The XML is ForensicsApp-specific."
+        ),
+        foreground="#555555",
+    ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(3, 0))
 
     dims_frame = ttk.Frame(ds_frame)
-    dims_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(6, 0))
+    dims_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(6, 0))
     for col, (lbl, var) in enumerate(
         (
             ("Window width:", win_w_var),
@@ -1424,7 +1757,7 @@ def ask_viola_jones_training_parameters(
         ttk.Label(dims_frame, text=lbl).grid(
             row=0, column=col * 2, sticky="w", padx=(0, 4)
         )
-        ttk.Spinbox(dims_frame, textvariable=var, from_=8, to=500, width=6).grid(
+        ttk.Spinbox(dims_frame, textvariable=var, from_=8, to=100000, width=8).grid(
             row=0, column=col * 2 + 1, padx=(0, 10)
         )
 
@@ -1454,7 +1787,7 @@ def ask_viola_jones_training_parameters(
     ttk.Combobox(
         adv_frame,
         textvariable=boost_type_var,
-        values=("GAB", "DAB", "RAB", "LB"),
+        values=("DISCRETE",),
         state="readonly",
         width=8,
     ).grid(row=1, column=1, sticky="w", padx=6, pady=3)
@@ -1470,7 +1803,9 @@ def ask_viola_jones_training_parameters(
         width=8,
     ).grid(row=1, column=3, sticky="w", padx=6, pady=3)
 
-    ttk.Label(adv_frame, text="Min hit rate:").grid(row=2, column=0, sticky="w", pady=3)
+    ttk.Label(adv_frame, text="Min hit rate / stage:").grid(
+        row=2, column=0, sticky="w", pady=3
+    )
     ttk.Spinbox(
         adv_frame,
         textvariable=min_hit_rate_var,
@@ -1480,7 +1815,7 @@ def ask_viola_jones_training_parameters(
         width=8,
     ).grid(row=2, column=1, sticky="w", padx=6, pady=3)
 
-    ttk.Label(adv_frame, text="Max false alarm rate:").grid(
+    ttk.Label(adv_frame, text="Max false alarm / stage:").grid(
         row=2, column=2, sticky="w", padx=(12, 0), pady=3
     )
     ttk.Spinbox(
@@ -1499,7 +1834,7 @@ def ask_viola_jones_training_parameters(
         row=3, column=1, sticky="w", padx=6, pady=3
     )
 
-    ttk.Label(adv_frame, text="Weight trimming / Depth:").grid(
+    ttk.Label(adv_frame, text="Weight trimming / stump depth:").grid(
         row=3, column=2, sticky="w", padx=(12, 0), pady=3
     )
     trim_sub = ttk.Frame(adv_frame)
@@ -1512,9 +1847,56 @@ def ask_viola_jones_training_parameters(
         increment=0.05,
         width=5,
     ).pack(side="left")
-    ttk.Spinbox(trim_sub, textvariable=tree_depth_var, from_=1, to=4, width=3).pack(
-        side="left", padx=(4, 0)
+    ttk.Spinbox(
+        trim_sub,
+        textvariable=tree_depth_var,
+        from_=1,
+        to=1,
+        width=3,
+        state="disabled",
+    ).pack(side="left", padx=(4, 0))
+
+    ttk.Label(adv_frame, text="Max candidate Haar features:").grid(
+        row=4, column=0, sticky="w", pady=3
     )
+    ttk.Spinbox(
+        adv_frame,
+        textvariable=max_features_var,
+        from_=100,
+        to=50000,
+        increment=100,
+        width=8,
+    ).grid(row=4, column=1, sticky="w", padx=6, pady=3)
+    ttk.Label(adv_frame, text="Random seed:").grid(
+        row=4, column=2, sticky="w", padx=(12, 0), pady=3
+    )
+    ttk.Entry(adv_frame, textvariable=random_seed_var, width=10).grid(
+        row=4, column=3, sticky="w", padx=6, pady=3
+    )
+
+    ttk.Label(adv_frame, text="Haar feature width (min / max):").grid(
+        row=5, column=0, sticky="w", pady=3
+    )
+    fw_frame = ttk.Frame(adv_frame)
+    fw_frame.grid(row=5, column=1, sticky="w", padx=6, pady=3)
+    ttk.Spinbox(
+        fw_frame, textvariable=min_feature_width_var, from_=2, to=100, width=5
+    ).pack(side="left")
+    ttk.Spinbox(
+        fw_frame, textvariable=max_feature_width_var, from_=2, to=100, width=5
+    ).pack(side="left", padx=(4, 0))
+
+    ttk.Label(adv_frame, text="Haar feature height (min / max):").grid(
+        row=5, column=2, sticky="w", padx=(12, 0), pady=3
+    )
+    fh_frame = ttk.Frame(adv_frame)
+    fh_frame.grid(row=5, column=3, sticky="w", padx=6, pady=3)
+    ttk.Spinbox(
+        fh_frame, textvariable=min_feature_height_var, from_=2, to=100, width=5
+    ).pack(side="left")
+    ttk.Spinbox(
+        fh_frame, textvariable=max_feature_height_var, from_=2, to=100, width=5
+    ).pack(side="left", padx=(4, 0))
 
     result: dict[str, Any] | None = None
 
@@ -1543,21 +1925,35 @@ def ask_viola_jones_training_parameters(
             max_fa = float(max_fa_rate_var.get())
             w_trim = float(weight_trim_var.get())
             t_depth = int(tree_depth_var.get())
+            max_features_value = int(max_features_var.get())
+            seed_value = int(random_seed_var.get())
+            min_fw_value = int(min_feature_width_var.get())
+            max_fw_value = int(max_feature_width_var.get())
+            min_fh_value = int(min_feature_height_var.get())
+            max_fh_value = int(max_feature_height_var.get())
             if (
                 win_w < 8
                 or win_h < 8
-                or n_pos < 1
-                or n_neg < 1
+                or n_pos < 2
+                or n_neg < 2
                 or n_stages < 1
                 or max_weak < 1
+                or max_features_value < 100
+                or min_fw_value < 2
+                or max_fw_value < min_fw_value
+                or min_fh_value < 2
+                or max_fh_value < min_fh_value
                 or not (0.0 < min_hr <= 1.0)
-                or not (0.0 < max_fa <= 1.0)
+                or not (0.0 < max_fa < 1.0)
             ):
                 raise ValueError
         except ValueError:
             messagebox.showerror(
                 "Invalid Parameters",
-                "Please enter valid positive numbers for all training parameters.",
+                (
+                    "Please enter valid values. At least two positive and two "
+                    "negative samples are required; false-alarm rate must be below 1.0."
+                ),
                 parent=dialog,
             )
             return
@@ -1566,6 +1962,8 @@ def ask_viola_jones_training_parameters(
             "positive_dir": pos_dir,
             "negative_dir": neg_dir,
             "annotations_path": ann_file_var.get().strip() or None,
+            "pos_test_dir": pos_test_dir_var.get().strip() or None,
+            "neg_test_dir": neg_test_dir_var.get().strip() or None,
             "output_xml_path": output_xml_var.get().strip() or str(DEFAULT_CASCADE_XML),
             "window_width": win_w,
             "window_height": win_h,
@@ -1579,6 +1977,12 @@ def ask_viola_jones_training_parameters(
             "max_weak_tree_depth": t_depth,
             "boost_type": boost_type_var.get(),
             "feature_mode": feature_mode_var.get(),
+            "max_features": max_features_value,
+            "random_seed": seed_value,
+            "min_feature_width": min_fw_value,
+            "max_feature_width": max_fw_value,
+            "min_feature_height": min_fh_value,
+            "max_feature_height": max_fh_value,
         }
         dialog.destroy()
 
@@ -1598,7 +2002,7 @@ class ViolaJonesTrainerTool(ForensicsTool):
     """Tool 1 — Train a custom Haar + AdaBoost cascade and persist the XML model."""
 
     tool_id = "viola_jones_trainer"
-    title = "Viola–Jones Trainer"
+    title = "Viola-Jones Trainer"
     category = "Face Analysis"
     description = "Train a custom Haar + AdaBoost cascade and persist the XML model."
     requires_image = False
@@ -1620,18 +2024,19 @@ class ViolaJonesTrainerTool(ForensicsTool):
         xml_path = Path(training_out["xml_path"])
 
         details: dict[str, Any] = {
-            "Operation": "Viola–Jones Cascade Training",
+            "Operation": "Viola-Jones Cascade Training",
             "Cascade XML": xml_path.name,
             "XML path": str(xml_path),
             "Config JSON": Path(training_out["config_path"]).name,
             "Training log": Path(training_out["log_path"]).name,
             "Window size": f"{cfg['window_width']} × {cfg['window_height']}",
             "Positive / Negative": f"{cfg['num_pos']} / {cfg['num_neg']}",
-            "Stages trained": cfg["num_stages"],
+            "Stages trained": cfg.get("num_stages_trained", cfg.get("num_stages", 0)),
             "Weak classifiers": cfg["total_weak_classifiers"],
             "Boosting / Mode": f"{cfg['boost_type']} / {cfg['feature_mode']}",
             "Train face accuracy": f"{cfg['train_face_accuracy_pct']:.1f}%",
             "Train non-face accuracy": f"{cfg['train_nonface_accuracy_pct']:.1f}%",
+            "Train overall accuracy": f"{cfg['train_accuracy_pct']:.1f}%",
             "Training duration": f"{cfg['training_duration_sec']:.2f} s",
         }
         if cfg.get("test_face_accuracy_pct") is not None:
@@ -1640,11 +2045,14 @@ class ViolaJonesTrainerTool(ForensicsTool):
             details["Test non-face accuracy"] = (
                 f"{cfg['test_nonface_accuracy_pct']:.1f}%"
             )
+        if cfg.get("test_accuracy_pct") is not None:
+            details["Test overall accuracy"] = f"{cfg['test_accuracy_pct']:.1f}%"
 
+        stages_count = cfg.get("num_stages_trained", cfg.get("num_stages", 0))
         return ToolResult(
             image=training_out["summary_image"],
             message=(
-                f"Trained Viola–Jones cascade ({cfg['num_stages']} stage(s), "
+                f"Trained Viola-Jones cascade ({stages_count} stage(s), "
                 f"{cfg['total_weak_classifiers']} weak classifiers) -> {xml_path.name}."
             ),
             details=details,
