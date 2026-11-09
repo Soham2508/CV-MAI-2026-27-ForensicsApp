@@ -9,11 +9,20 @@ result (or re-raises its exception) on the main thread.
 The job must not touch Tkinter objects: read settings from widgets before
 calling, and update widgets after it returns. Figures must be rendered with
 ``matplotlib.figure.Figure`` rather than pyplot.
+
+Python's cyclic garbage collector runs in whichever thread happens to be
+allocating. A closed dialog's StringVars or PhotoImages often survive in
+reference cycles (nested callbacks), so a collection inside the worker would
+finalise them off the Tk thread, and Tcl aborts the whole process ("main
+thread is not in main loop", "Tcl_AsyncDelete: async handler deleted by the
+wrong thread"). ``run_with_progress`` therefore collects on the main thread
+first and pauses automatic collection until the job has finished.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+import gc
 import threading
 import time
 import tkinter as tk
@@ -51,41 +60,51 @@ def run_with_progress(
         except BaseException as exc:  # re-raised on the main thread below
             outcome["error"] = exc
 
-    previous_grab = parent.grab_current()
-    dialog = tk.Toplevel(parent)
-    dialog.title(title)
-    dialog.transient(parent.winfo_toplevel())
-    dialog.resizable(False, False)
-    ttk.Label(dialog, text=message, wraplength=320).pack(padx=18, pady=(16, 8))
-    bar = ttk.Progressbar(dialog, mode="indeterminate", length=300)
-    bar.pack(padx=18, pady=4)
-    elapsed = tk.StringVar(value="Elapsed: 0 s")
-    ttk.Label(dialog, textvariable=elapsed).pack(padx=18, pady=(4, 6))
-    ttk.Label(
-        dialog,
-        text="Please wait; this window closes when the job finishes.",
-        foreground="#666666",
-    ).pack(padx=18, pady=(0, 14))
-    # The job cannot be interrupted safely, so the window cannot be closed.
-    dialog.protocol("WM_DELETE_WINDOW", lambda: None)
-    bar.start(12)
-    dialog.grab_set()
+    # Finalise dead Tkinter objects here, on the main thread, and keep the
+    # cyclic collector from running in the worker (see the module docstring).
+    gc_was_enabled = gc.isenabled()
+    gc.collect()
+    gc.disable()
+    try:
+        previous_grab = parent.grab_current()
+        dialog = tk.Toplevel(parent)
+        dialog.title(title)
+        dialog.transient(parent.winfo_toplevel())
+        dialog.resizable(False, False)
+        ttk.Label(dialog, text=message, wraplength=320).pack(padx=18, pady=(16, 8))
+        bar = ttk.Progressbar(dialog, mode="indeterminate", length=300)
+        bar.pack(padx=18, pady=4)
+        elapsed = tk.StringVar(value="Elapsed: 0 s")
+        ttk.Label(dialog, textvariable=elapsed).pack(padx=18, pady=(4, 6))
+        ttk.Label(
+            dialog,
+            text="Please wait; this window closes when the job finishes.",
+            foreground="#666666",
+        ).pack(padx=18, pady=(0, 14))
+        # The job cannot be interrupted safely, so the window cannot be closed.
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        bar.start(12)
+        dialog.grab_set()
 
-    thread = threading.Thread(target=worker, daemon=True)
-    started = time.monotonic()
-    thread.start()
+        thread = threading.Thread(target=worker, daemon=True)
+        started = time.monotonic()
+        thread.start()
 
-    def poll() -> None:
-        if thread.is_alive():
-            elapsed.set(f"Elapsed: {time.monotonic() - started:.0f} s")
-            dialog.after(POLL_MS, poll)
-            return
-        bar.stop()
-        dialog.grab_release()
-        dialog.destroy()
+        def poll() -> None:
+            if thread.is_alive():
+                elapsed.set(f"Elapsed: {time.monotonic() - started:.0f} s")
+                dialog.after(POLL_MS, poll)
+                return
+            bar.stop()
+            dialog.grab_release()
+            dialog.destroy()
 
-    dialog.after(POLL_MS, poll)
-    parent.wait_window(dialog)
+        dialog.after(POLL_MS, poll)
+        parent.wait_window(dialog)
+    finally:
+        if gc_was_enabled:
+            gc.enable()
+    gc.collect()
 
     # Give the modal grab back to the dialog that had it (e.g. a trainer window).
     if previous_grab is not None:
