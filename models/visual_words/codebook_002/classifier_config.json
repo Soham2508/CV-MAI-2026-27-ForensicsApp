@@ -6,13 +6,16 @@
     "dalmatian",
     "kangaroo"
   ],
-  "normalization": "l2",
-  "algorithm_key": "rbf_svm",
-  "algorithm": "RBF SVM",
-  "C": 2.5,
+  "normalization": "l1",
+  "assignment": "hard",
+  "sigma": null,
+  "k_nearest": null,
+  "algorithm_key": "knn",
+  "algorithm": "K-NN",
+  "C": 1.0,
   "gamma": "scale",
-  "class_weight": "balanced",
-  "n_neighbors": 5,
+  "class_weight": null,
+  "n_neighbors": 7,
   "knn_weights": "distance",
   "knn_metric": "euclidean",
   "n_estimators": 100,
@@ -22,25 +25,25 @@
   "num_train_samples": 183,
   "num_test_samples": 61,
   "train_accuracy": 1.0,
-  "test_accuracy": 0.7049180327868853,
+  "test_accuracy": 0.6065573770491803,
   "confusion_matrix": [
     [
-      11,
-      6,
-      6
-    ],
-    [
-      1,
-      15,
-      1
-    ],
-    [
       4,
+      8,
+      11
+    ],
+    [
       0,
-      17
+      14,
+      3
+    ],
+    [
+      0,
+      2,
+      19
     ]
   ],
-  "classification_report": "              precision    recall  f1-score   support\n\n   butterfly       0.69      0.48      0.56        23\n   dalmatian       0.71      0.88      0.79        17\n    kangaroo       0.71      0.81      0.76        21\n\n    accuracy                           0.70        61\n   macro avg       0.70      0.72      0.70        61\nweighted avg       0.70      0.70      0.69        61\n",
-  "training_time_s": 0.03109470001072623,
-  "model_dir": "models\\visual_words\\codebook_002"
+  "classification_report": "              precision    recall  f1-score   support\n\n   butterfly       1.00      0.17      0.30        23\n   dalmatian       0.58      0.82      0.68        17\n    kangaroo       0.58      0.90      0.70        21\n\n    accuracy                           0.61        61\n   macro avg       0.72      0.63      0.56        61\nweighted avg       0.74      0.61      0.54        61\n",
+  "training_time_s": 0.0007037000032141805,
+  "model_dir": "models/visual_words/codebook_002"
 }

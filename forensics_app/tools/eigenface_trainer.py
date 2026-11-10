@@ -740,6 +740,32 @@ def save_eigenface_model(
             }
         )
 
+    # Persist via joblib for native scikit-learn estimator persistence
+    joblib_path = out_dir / "pca_model.joblib"
+    joblib_payload = {
+        "pca": pca_result["pca"],
+        "model_id": pca_result["model_id"],
+        "image_shape": (h, w),
+        "mean": pca_result["pca"].mean_,
+        "mean_face": pca_result["mean_face"],
+        "components": pca_result["components"],
+        "eigenfaces": pca_result["eigenfaces"],
+        "explained_variance": pca_result["explained_variance"],
+        "explained_variance_ratio": pca_result["explained_variance_ratio"],
+        "singular_values": pca_result["singular_values"],
+        "total_explained_variance": float(pca_result["total_explained_variance"]),
+        "n_components": int(pca_result["n_components"]),
+        "svd_solver": pca_result["svd_solver"],
+        "whiten": bool(pca_result["whiten"]),
+        "target_names": target_names,
+        "value_scale": pca_result.get("value_scale", "0_1"),
+        "X_train_pca": pca_result["X_train_pca"],
+        "y_train": pca_result["y_train"],
+        "X_test_pca": pca_result.get("X_test_pca"),
+        "y_test": pca_result.get("y_test"),
+    }
+    joblib.dump(joblib_payload, joblib_path)
+
     npz_path = out_dir / "pca_model.npz"
     np.savez_compressed(
         npz_path,
@@ -812,6 +838,7 @@ def save_eigenface_model(
 
     return {
         "model_dir": out_dir,
+        "pca_model_joblib": joblib_path,
         "pca_model_npz": npz_path,
         "metadata_json": metadata_path,
         "training_embeddings_npy": embeddings_path,
@@ -847,52 +874,140 @@ def project_faces_with_saved_pca(
 
 
 def load_eigenface_model(model_path: str | Path) -> dict[str, Any]:
-    """Load a persisted Eigenface / PCA model directory or ``pca_model.npz`` file."""
+    """Load a persisted Eigenface / PCA model directory, ``.joblib`` file, or ``pca_model.npz`` file."""
     p = resolve_path(model_path)
     model_dir = p if p.is_dir() else p.parent
-    npz_path = model_dir / "pca_model.npz" if p.is_dir() else p
-    if not npz_path.exists():
-        raise FileNotFoundError(f"PCA model file not found: {npz_path}")
+    joblib_path = (model_dir / "pca_model.joblib") if p.is_dir() else p
+    npz_path = (model_dir / "pca_model.npz") if p.is_dir() else p
+
+    # Determine serialization format: prefer .joblib if requested or present in directory
+    use_joblib = (
+        p.is_file() and p.suffix.lower() == ".joblib"
+    ) or (p.is_dir() and joblib_path.exists())
+
+    if not use_joblib and not npz_path.exists():
+        if joblib_path.exists():
+            use_joblib = True
+        else:
+            raise FileNotFoundError(
+                f"PCA model file not found in {model_dir} (expected pca_model.joblib or pca_model.npz)"
+            )
 
     meta_path = model_dir / "metadata.json"
-    if not meta_path.exists():
-        raise FileNotFoundError(f"PCA metadata.json not found in {model_dir}")
+    metadata: dict[str, Any] = {}
+    if meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            metadata = {}
 
-    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-    npz = np.load(npz_path, allow_pickle=False)
+    bundle: dict[str, Any] | None = None
+    if use_joblib:
+        bundle = joblib.load(joblib_path)
+        if not isinstance(bundle, dict) or "pca" not in bundle:
+            raise ValueError(f"Invalid Eigenface joblib bundle at {joblib_path}")
+        pca_obj: PCA = bundle["pca"]
+        mean = np.asarray(bundle.get("mean", pca_obj.mean_), dtype=np.float32)
+        components = np.asarray(
+            bundle.get("components", pca_obj.components_), dtype=np.float32
+        )
+        h, w = (
+            int(bundle["image_shape"][0]),
+            int(bundle["image_shape"][1]),
+        )
+        eigenfaces = np.asarray(
+            bundle.get("eigenfaces", components.reshape(-1, h, w)), dtype=np.float32
+        )
+        explained_variance = np.asarray(
+            bundle.get("explained_variance", pca_obj.explained_variance_),
+            dtype=np.float32,
+        )
+        explained_variance_ratio = np.asarray(
+            bundle.get("explained_variance_ratio", pca_obj.explained_variance_ratio_),
+            dtype=np.float32,
+        )
+        singular_values = np.asarray(
+            bundle.get("singular_values", getattr(pca_obj, "singular_values_", None)),
+            dtype=np.float32,
+        )
+        whiten = bool(bundle.get("whiten", getattr(pca_obj, "whiten", True)))
+        model_id = bundle.get("model_id") or metadata.get("model_id", "unknown_model_id")
+        target_names = [
+            str(n)
+            for n in bundle.get("target_names", metadata.get("target_names", []))
+        ]
+        value_scale = bundle.get("value_scale", metadata.get("value_scale", "0_1"))
+        n_components = int(
+            bundle.get(
+                "n_components",
+                getattr(pca_obj, "n_components", metadata.get("n_components", components.shape[0])),
+            )
+        )
+        svd_solver = bundle.get(
+            "svd_solver", metadata.get("svd_solver", getattr(pca_obj, "svd_solver", "randomized"))
+        )
+    else:
+        if not meta_path.exists():
+            raise FileNotFoundError(f"PCA metadata.json not found in {model_dir}")
+        npz = np.load(npz_path, allow_pickle=False)
+        mean = np.asarray(npz["mean"], dtype=np.float32)
+        components = np.asarray(npz["components"], dtype=np.float32)
+        eigenfaces = np.asarray(npz["eigenfaces"], dtype=np.float32)
+        explained_variance = np.asarray(npz["explained_variance"], dtype=np.float32)
+        explained_variance_ratio = np.asarray(
+            npz["explained_variance_ratio"], dtype=np.float32
+        )
+        singular_values = np.asarray(npz["singular_values"], dtype=np.float32)
+        h, w = int(metadata["image_shape"][0]), int(metadata["image_shape"][1])
+        whiten = bool(metadata.get("whiten", True))
+        model_id = metadata["model_id"]
+        target_names = [str(n) for n in metadata.get("target_names", [])]
+        value_scale = metadata.get("value_scale", "0_1")
+        n_components = int(metadata["n_components"])
+        svd_solver = metadata.get("svd_solver", "randomized")
 
-    mean = np.asarray(npz["mean"], dtype=np.float32)
-    components = np.asarray(npz["components"], dtype=np.float32)
-    eigenfaces = np.asarray(npz["eigenfaces"], dtype=np.float32)
-    explained_variance = np.asarray(npz["explained_variance"], dtype=np.float32)
-    explained_variance_ratio = np.asarray(
-        npz["explained_variance_ratio"], dtype=np.float32
-    )
-    singular_values = np.asarray(npz["singular_values"], dtype=np.float32)
-    h, w = int(metadata["image_shape"][0]), int(metadata["image_shape"][1])
-    whiten = bool(metadata.get("whiten", True))
+        # Reconstruct a fitted sklearn PCA instance for seamless transform compatibility
+        pca_obj = PCA(
+            n_components=n_components,
+            svd_solver=svd_solver,
+            whiten=whiten,
+        )
+        pca_obj.mean_ = mean
+        pca_obj.components_ = components
+        pca_obj.explained_variance_ = explained_variance
+        pca_obj.explained_variance_ratio_ = explained_variance_ratio
+        pca_obj.singular_values_ = singular_values
+        pca_obj.n_components_ = n_components
+        pca_obj.n_features_in_ = mean.shape[0]
 
     emb_path = model_dir / "training_embeddings.npy"
     lbl_path = model_dir / "training_labels.npy"
-    if not emb_path.exists() or not lbl_path.exists():
+    if emb_path.exists() and lbl_path.exists():
+        X_train_pca = np.load(emb_path, allow_pickle=False)
+        y_train = np.load(lbl_path, allow_pickle=False)
+    elif bundle is not None and "X_train_pca" in bundle and "y_train" in bundle:
+        X_train_pca = np.asarray(bundle["X_train_pca"], dtype=np.float32)
+        y_train = np.asarray(bundle["y_train"], dtype=np.int64)
+    else:
         raise FileNotFoundError(
             f"Missing training_embeddings.npy or training_labels.npy in {model_dir}"
         )
-    X_train_pca = np.load(emb_path, allow_pickle=False)
-    y_train = np.load(lbl_path, allow_pickle=False)
 
     test_emb_path = model_dir / "test_embeddings.npy"
     test_lbl_path = model_dir / "test_labels.npy"
-    X_test_pca = (
-        np.load(test_emb_path, allow_pickle=False)
-        if test_emb_path.exists()
-        else np.empty((0, components.shape[0]), dtype=np.float32)
-    )
-    y_test = (
-        np.load(test_lbl_path, allow_pickle=False)
-        if test_lbl_path.exists()
-        else np.empty((0,), dtype=np.int64)
-    )
+    if test_emb_path.exists() and test_lbl_path.exists():
+        X_test_pca = np.load(test_emb_path, allow_pickle=False)
+        y_test = np.load(test_lbl_path, allow_pickle=False)
+    elif bundle is not None and bundle.get("X_test_pca") is not None:
+        X_test_pca = np.asarray(bundle["X_test_pca"], dtype=np.float32)
+        y_test = (
+            np.asarray(bundle["y_test"], dtype=np.int64)
+            if bundle.get("y_test") is not None
+            else np.empty((0,), dtype=np.int64)
+        )
+    else:
+        X_test_pca = np.empty((0, components.shape[0]), dtype=np.float32)
+        y_test = np.empty((0,), dtype=np.int64)
 
     paths_file = model_dir / "training_image_paths.json"
     image_records = (
@@ -901,24 +1016,10 @@ def load_eigenface_model(model_path: str | Path) -> dict[str, Any]:
         else {"train": [], "test": []}
     )
 
-    # Reconstruct a fitted sklearn PCA instance for seamless transform compatibility
-    pca_obj = PCA(
-        n_components=int(metadata["n_components"]),
-        svd_solver=metadata.get("svd_solver", "randomized"),
-        whiten=whiten,
-    )
-    pca_obj.mean_ = mean
-    pca_obj.components_ = components
-    pca_obj.explained_variance_ = explained_variance
-    pca_obj.explained_variance_ratio_ = explained_variance_ratio
-    pca_obj.singular_values_ = singular_values
-    pca_obj.n_components_ = int(metadata["n_components"])
-    pca_obj.n_features_in_ = mean.shape[0]
-
     return {
         "model_dir": model_dir,
         "pca": pca_obj,
-        "model_id": metadata["model_id"],
+        "model_id": model_id,
         "mean": mean,
         "mean_face": mean.reshape((h, w)),
         "components": components,
@@ -931,11 +1032,11 @@ def load_eigenface_model(model_path: str | Path) -> dict[str, Any]:
         "y_train": y_train,
         "X_test_pca": X_test_pca,
         "y_test": y_test,
-        "target_names": [str(n) for n in metadata["target_names"]],
+        "target_names": target_names,
         "image_shape": (h, w),
-        "value_scale": metadata.get("value_scale", "0_1"),
-        "n_components": int(metadata["n_components"]),
-        "svd_solver": metadata.get("svd_solver", "randomized"),
+        "value_scale": value_scale,
+        "n_components": n_components,
+        "svd_solver": svd_solver,
         "whiten": whiten,
         "train_records": image_records.get("train", []),
         "test_records": image_records.get("test", []),
@@ -1759,7 +1860,7 @@ class EigenfaceTrainerDialog:
     def _run_knn_training(self) -> None:
         if self.pca_result is None:
             model_dir = resolve_path(self.model_dir_var.get().strip())
-            if (model_dir / "pca_model.npz").exists():
+            if (model_dir / "pca_model.joblib").exists() or (model_dir / "pca_model.npz").exists():
                 try:
                     self.pca_result = load_eigenface_model(model_dir)
                 except Exception as exc:

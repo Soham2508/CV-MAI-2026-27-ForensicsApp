@@ -111,6 +111,9 @@ def train_classifier(
     class_names: list[str],
     codebook_id: str = "",
     normalization: str = "l1",
+    assignment: str = "hard",
+    sigma: float | None = None,
+    k_nearest: int | None = None,
     algorithm: str = "linear_svm",
     C: float = 1.0,
     gamma: str | float = "scale",
@@ -216,6 +219,9 @@ def train_classifier(
         "n_clusters": int(X_tr.shape[1]),
         "class_names": list(class_names),
         "normalization": canonical_normalization(normalization),
+        "assignment": str(assignment).strip().lower(),
+        "sigma": sigma,
+        "k_nearest": k_nearest,
         "algorithm_key": alg_key,
         "algorithm": _display_algorithm_name(alg_key),
         "C": float(C),
@@ -338,7 +344,15 @@ def classify_image(
         )
 
     norm_mode = canonical_normalization(str(cfg.get("normalization", "l1")))
-    hist_res = build_histogram(image, codebook_bundle, normalization=norm_mode)
+    assign_mode = str(cfg.get("assignment", "hard")).strip().lower()
+    hist_res = build_histogram(
+        image,
+        codebook_bundle,
+        normalization=norm_mode,
+        assignment=assign_mode,
+        sigma=cfg.get("sigma"),
+        k_nearest=cfg.get("k_nearest"),
+    )
     hist_vec = hist_res["histogram"].reshape(1, -1)
 
     estimator = classifier_bundle["classifier"]
@@ -401,21 +415,29 @@ def classify_image(
 def load_or_build_histograms(
     codebook_bundle: dict[str, Any],
     normalization: str = "l1",
+    assignment: str = "hard",
+    sigma: float | None = None,
+    k_nearest: int | None = None,
 ) -> dict[str, Any]:
-    """Return the codebook's histogram matrices with the requested normalisation.
+    """Return the codebook's histogram matrices with the requested normalisation and assignment.
 
-    Saved matrices are reused only when they come from this codebook and use
-    this normalisation; otherwise they are rebuilt (and saved).
+    Saved matrices are reused only when they come from this codebook and match
+    both normalisation and assignment strategy; otherwise they are rebuilt (and saved).
     """
     try:
         return load_histogram_dataset(
             codebook_bundle["model_dir"],
             expected_codebook_id=codebook_bundle["codebook_id"],
             expected_normalization=normalization,
+            expected_assignment=assignment,
         )
     except (ValueError, OSError):
         return build_and_save_histogram_datasets(
-            codebook_bundle, normalization=normalization
+            codebook_bundle,
+            normalization=normalization,
+            assignment=assignment,
+            sigma=sigma,
+            k_nearest=k_nearest,
         )
 
 
@@ -429,13 +451,25 @@ def train_and_save_classifier(
     behind ``run_with_progress`` (no Tkinter access).
     """
     norm_mode = canonical_normalization(str(settings.get("normalization", "l1")))
-    hist_ds = load_or_build_histograms(codebook_bundle, norm_mode)
+    assign_mode = str(settings.get("assignment", "hard")).strip().lower()
+    sigma = settings.get("sigma")
+    k_nearest = settings.get("k_nearest")
+    hist_ds = load_or_build_histograms(
+        codebook_bundle,
+        normalization=norm_mode,
+        assignment=assign_mode,
+        sigma=sigma,
+        k_nearest=k_nearest,
+    )
     clf_bundle = train_classifier(
         hist_ds["X_train"],
         hist_ds["y_train"],
         class_names=codebook_bundle["metadata"]["class_names"],
         codebook_id=codebook_bundle["codebook_id"],
         normalization=norm_mode,
+        assignment=hist_ds["metadata"].get("assignment", assign_mode),
+        sigma=hist_ds["metadata"].get("sigma", sigma),
+        k_nearest=hist_ds["metadata"].get("k_nearest", k_nearest),
         algorithm=str(settings.get("algorithm", "linear_svm")),
         C=float(settings.get("C", 1.0)),
         gamma=settings.get("gamma", "scale"),

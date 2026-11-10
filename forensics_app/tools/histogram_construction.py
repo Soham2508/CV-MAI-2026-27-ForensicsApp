@@ -96,6 +96,83 @@ def assign_descriptors_to_words(
     return word_indices, min_dists
 
 
+def assign_descriptors_to_words_soft(
+    descriptors: np.ndarray,
+    codebook: np.ndarray,
+    *,
+    sigma: float | None = None,
+    k_nearest: int | None = 5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Soft-assign descriptors to visual words using continuous Gaussian kernel weights.
+
+    For each descriptor ``d_i`` and centroid ``c_j``:
+        ``w'_ij = exp(- ||d_i - c_j||_2^2 / (2 * sigma^2))``
+    Optionally restricted to the ``k_nearest`` centroids (all other words receive
+    zero weight). Each descriptor's weights are normalized to sum to 1.0
+    (``sum_j w_ij = 1.0``).
+
+    Returns ``(word_indices, min_distances, soft_weights)``.
+    """
+    centroids = np.asarray(codebook, dtype=np.float32)
+    if centroids.ndim != 2 or len(centroids) == 0:
+        raise ValueError("codebook must be a non-empty 2D array of shape (K, D).")
+
+    descs = np.asarray(descriptors, dtype=np.float32)
+    k_words = len(centroids)
+    if len(descs) == 0:
+        return (
+            np.empty((0,), dtype=np.int64),
+            np.empty((0,), dtype=np.float32),
+            np.empty((0, k_words), dtype=np.float32),
+        )
+
+    if descs.ndim != 2 or descs.shape[1] != centroids.shape[1]:
+        raise ValueError(
+            f"Descriptor shape {descs.shape} does not match codebook {centroids.shape}."
+        )
+
+    if not (np.isfinite(descs).all() and np.isfinite(centroids).all()):
+        raise ValueError("Descriptors and codebook must contain only finite values.")
+
+    d_sq = np.sum(descs * descs, axis=1, keepdims=True)
+    c_sq = np.sum(centroids * centroids, axis=1, keepdims=True).T
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        cross = descs @ centroids.T
+    sq_dists = np.maximum(0.0, d_sq + c_sq - 2.0 * cross)
+    word_indices = np.argmin(sq_dists, axis=1).astype(np.int64)
+    min_sq = sq_dists[np.arange(len(descs)), word_indices][:, None]
+    min_dists = np.sqrt(min_sq[:, 0]).astype(np.float32)
+
+    # Determine bandwidth sigma (adaptive mean nearest-centroid distance if None)
+    if sigma is None:
+        mean_d = float(np.mean(min_dists))
+        bandwidth = mean_d if mean_d > 0.0 else 1.0
+    else:
+        bandwidth = max(float(sigma), 1e-6)
+
+    # Relative squared distances (min_sq subtracted for numerical stability)
+    delta_sq = sq_dists - min_sq
+
+    # Localized soft assignment to k_nearest visual words
+    if k_nearest is not None and 1 <= k_nearest < k_words:
+        top_k_idx = np.argpartition(sq_dists, k_nearest, axis=1)[:, :k_nearest]
+        mask = np.zeros_like(sq_dists, dtype=bool)
+        np.put_along_axis(mask, top_k_idx, True, axis=1)
+    else:
+        mask = None
+
+    exp_weights = np.exp(-delta_sq / (2.0 * (bandwidth ** 2)))
+    if mask is not None:
+        exp_weights = exp_weights * mask
+
+    row_sums = np.sum(exp_weights, axis=1, keepdims=True)
+    soft_weights = np.divide(
+        exp_weights, row_sums, out=np.zeros_like(exp_weights), where=row_sums > 0.0
+    ).astype(np.float32)
+
+    return word_indices, min_dists, soft_weights
+
+
 def canonical_normalization(normalization: str) -> str:
     """Map a normalisation name or alias to 'l1', 'l2' or 'none'."""
     norm_mode = str(normalization).strip().lower()
@@ -138,6 +215,9 @@ def build_histogram(
     codebook_bundle: dict[str, Any],
     *,
     normalization: str = "l1",
+    assignment: str = "hard",
+    sigma: float | None = None,
+    k_nearest: int | None = None,
 ) -> dict[str, Any]:
     """Extract descriptors from ``image``, assign words, and build a K-bin histogram."""
     centroids = np.asarray(codebook_bundle["codebook"], dtype=np.float32)
@@ -147,8 +227,21 @@ def build_histogram(
     keypoints, descriptors, gray_pil = extract_local_descriptors_from_image(
         image, desc_cfg
     )
-    word_indices, distances = assign_descriptors_to_words(descriptors, centroids)
-    raw_counts = np.bincount(word_indices, minlength=k_words).astype(np.int64)
+    assign_mode = str(assignment).strip().lower()
+
+    if assign_mode == "soft":
+        word_indices, distances, soft_weights = assign_descriptors_to_words_soft(
+            descriptors, centroids, sigma=sigma, k_nearest=k_nearest
+        )
+        if len(descriptors) > 0:
+            raw_counts = np.sum(soft_weights, axis=0).astype(np.float32)
+        else:
+            raw_counts = np.zeros(k_words, dtype=np.float32)
+    else:
+        word_indices, distances = assign_descriptors_to_words(descriptors, centroids)
+        raw_counts = np.bincount(word_indices, minlength=k_words).astype(np.float32)
+        soft_weights = None
+
     histogram = normalize_histogram(raw_counts, normalization=normalization)
 
     return {
@@ -158,9 +251,13 @@ def build_histogram(
         "descriptors": descriptors,
         "word_indices": word_indices,
         "distances": distances,
+        "soft_weights": soft_weights,
         "gray_image": gray_pil,
         "n_clusters": k_words,
         "normalization": canonical_normalization(normalization),
+        "assignment": assign_mode,
+        "sigma": sigma,
+        "k_nearest": k_nearest,
     }
 
 
@@ -169,6 +266,9 @@ def generate_histogram_dataset(
     codebook_bundle: dict[str, Any],
     *,
     normalization: str = "l1",
+    assignment: str = "hard",
+    sigma: float | None = None,
+    k_nearest: int | None = None,
     progress_callback: Any | None = None,
 ) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
     """Build matrix ``X`` of shape ``(N, K)`` and label vector ``y`` for records."""
@@ -191,7 +291,14 @@ def generate_histogram_dataset(
                 "folder used to build the codebook is available."
             )
         with Image.open(img_path) as img:
-            res = build_histogram(img, codebook_bundle, normalization=normalization)
+            res = build_histogram(
+                img,
+                codebook_bundle,
+                normalization=normalization,
+                assignment=assignment,
+                sigma=sigma,
+                k_nearest=k_nearest,
+            )
         x_rows.append(res["histogram"])
         y_labels.append(int(rec["class_id"]))
         kept_records.append(dict(rec))
@@ -214,6 +321,9 @@ def build_and_save_histogram_datasets(
     codebook_bundle: dict[str, Any],
     *,
     normalization: str = "l1",
+    assignment: str = "hard",
+    sigma: float | None = None,
+    k_nearest: int | None = None,
     output_dir: str | Path | None = None,
     progress_callback: Any | None = None,
 ) -> dict[str, Any]:
@@ -225,6 +335,7 @@ def build_and_save_histogram_datasets(
         raise ValueError("Codebook metadata contains no training image records.")
 
     norm_mode = canonical_normalization(normalization)
+    assign_mode = str(assignment).strip().lower()
     model_dir = resolve_path(
         codebook_bundle.get("model_dir", DEFAULT_VISUAL_WORDS_MODEL_DIR)
     )
@@ -234,7 +345,8 @@ def build_and_save_histogram_datasets(
     k_words = int(meta["n_clusters"])
     train_raw = codebook_bundle.get("train_raw_counts")
     if (
-        train_raw is not None
+        assign_mode == "hard"
+        and train_raw is not None
         and isinstance(train_raw, np.ndarray)
         and train_raw.shape == (len(train_records), k_words)
     ):
@@ -248,6 +360,9 @@ def build_and_save_histogram_datasets(
             train_records,
             codebook_bundle,
             normalization=normalization,
+            assignment=assign_mode,
+            sigma=sigma,
+            k_nearest=k_nearest,
             progress_callback=progress_callback,
         )
 
@@ -255,6 +370,9 @@ def build_and_save_histogram_datasets(
         test_records,
         codebook_bundle,
         normalization=normalization,
+        assignment=assign_mode,
+        sigma=sigma,
+        k_nearest=k_nearest,
         progress_callback=progress_callback,
     )
 
@@ -268,6 +386,9 @@ def build_and_save_histogram_datasets(
         "n_clusters": int(meta["n_clusters"]),
         "class_names": list(meta["class_names"]),
         "normalization": norm_mode,
+        "assignment": assign_mode,
+        "sigma": sigma,
+        "k_nearest": k_nearest,
         "num_train": int(len(X_train)),
         "num_test": int(len(X_test)),
         "train_records": kept_train,
@@ -291,6 +412,7 @@ def load_histogram_dataset(
     *,
     expected_codebook_id: str | None = None,
     expected_normalization: str | None = None,
+    expected_assignment: str | None = None,
 ) -> dict[str, Any]:
     """Load saved train/test histogram matrices and verify codebook compatibility.
 
@@ -326,6 +448,14 @@ def load_histogram_dataset(
             raise ValueError(
                 f"Histogram dataset normalisation ({saved_norm}) does not match "
                 f"the requested normalisation ({wanted_norm})."
+            )
+    if expected_assignment is not None:
+        saved_assign = str(meta.get("assignment", "hard")).strip().lower()
+        wanted_assign = str(expected_assignment).strip().lower()
+        if saved_assign != wanted_assign:
+            raise ValueError(
+                f"Histogram dataset assignment ({saved_assign}) does not match "
+                f"the requested assignment ({wanted_assign})."
             )
 
     X_train = np.asarray(np.load(x_tr_path), dtype=np.float32)
@@ -588,9 +718,39 @@ def ask_histogram_construction_parameters(
     ttk.Label(param_frame, text="Assignment strategy:").grid(
         row=0, column=0, sticky="w", pady=3
     )
-    ttk.Label(
-        param_frame, text="Hard assignment (Nearest Centroid, Euclidean L2)"
-    ).grid(row=0, column=1, columnspan=2, sticky="w", padx=6, pady=3)
+    assign_var = tk.StringVar(value="Hard assignment")
+    assign_combo = ttk.Combobox(
+        param_frame,
+        textvariable=assign_var,
+        values=("Hard assignment", "Soft assignment"),
+        state="readonly",
+        width=16,
+    )
+    assign_combo.grid(row=0, column=1, sticky="w", padx=6, pady=3)
+
+    soft_opts_frame = ttk.Frame(param_frame)
+    soft_opts_frame.grid(row=0, column=2, sticky="w", padx=6, pady=3)
+
+    ttk.Label(soft_opts_frame, text="k-nearest:").pack(side="left")
+    soft_k_var = tk.StringVar(value="5")
+    soft_k_spin = ttk.Spinbox(
+        soft_opts_frame, textvariable=soft_k_var, from_=1, to=100, width=4
+    )
+    soft_k_spin.pack(side="left", padx=(3, 8))
+
+    ttk.Label(soft_opts_frame, text="sigma:").pack(side="left")
+    soft_sigma_var = tk.StringVar(value="auto")
+    soft_sigma_entry = ttk.Entry(soft_opts_frame, textvariable=soft_sigma_var, width=7)
+    soft_sigma_entry.pack(side="left", padx=(3, 0))
+
+    def _update_soft_controls(*_args: object) -> None:
+        is_soft = "soft" in assign_var.get().lower()
+        state = "normal" if is_soft else "disabled"
+        soft_k_spin.configure(state=state)
+        soft_sigma_entry.configure(state=state)
+
+    assign_var.trace_add("write", _update_soft_controls)
+    _update_soft_controls()
 
     ttk.Label(param_frame, text="Histogram normalisation:").grid(
         row=1, column=0, sticky="w", pady=3
@@ -715,9 +875,24 @@ def ask_histogram_construction_parameters(
                     raise ValueError("Please select a valid test image file.")
                 test_img_path = cpath
 
+            is_soft = "soft" in assign_var.get().lower()
+            assign_mode = "soft" if is_soft else "hard"
+            k_near_val: int | None = None
+            sigma_val: float | None = None
+            if is_soft:
+                k_str = soft_k_var.get().strip().lower()
+                if k_str and k_str not in ("all", "none"):
+                    k_near_val = max(1, int(k_str))
+                sig_str = soft_sigma_var.get().strip().lower()
+                if sig_str and sig_str not in ("auto", "none"):
+                    sigma_val = float(sig_str)
+
             result = {
                 "codebook_dir": cb_dir,
                 "normalization": norm_var.get(),
+                "assignment": assign_mode,
+                "k_nearest": k_near_val,
+                "sigma": sigma_val,
                 "batch_process": bool(batch_var.get()),
                 "show_assignments": bool(show_assign_var.get()),
                 "source_mode": mode,
@@ -755,6 +930,20 @@ def compute_histogram_outputs(
     """
     bundle = load_codebook(parameters.get("codebook_dir", find_latest_codebook_dir()))
     norm_mode = canonical_normalization(str(parameters.get("normalization", "l1")))
+    assignment = str(parameters.get("assignment", "hard")).strip().lower()
+    raw_sigma = parameters.get("sigma")
+    sigma: float | None = None
+    if raw_sigma is not None:
+        s_str = str(raw_sigma).strip().lower()
+        if s_str not in ("auto", "none", ""):
+            sigma = float(s_str)
+    raw_k = parameters.get("k_nearest")
+    k_nearest: int | None = None
+    if raw_k is not None:
+        k_str = str(raw_k).strip().lower()
+        if k_str not in ("all", "none", ""):
+            k_nearest = int(k_str)
+
     batch_process = bool(parameters.get("batch_process", True))
     show_assignments = bool(parameters.get("show_assignments", True))
 
@@ -763,6 +952,9 @@ def compute_histogram_outputs(
         batch_out = build_and_save_histogram_datasets(
             bundle,
             normalization=norm_mode,
+            assignment=assignment,
+            sigma=sigma,
+            k_nearest=k_nearest,
             output_dir=parameters.get("output_dir"),
         )
 
@@ -770,19 +962,38 @@ def compute_histogram_outputs(
     sample_items: list[tuple[str, dict[str, Any]]] = []
     if parameters.get("test_image") is not None:
         h_res = build_histogram(
-            parameters["test_image"], bundle, normalization=norm_mode
+            parameters["test_image"],
+            bundle,
+            normalization=norm_mode,
+            assignment=assignment,
+            sigma=sigma,
+            k_nearest=k_nearest,
         )
         label = str(parameters.get("test_label", "Test image"))
         sample_items.append((label, h_res))
     elif parameters.get("test_image_path"):
         tpath = resolve_record_path(parameters["test_image_path"])
         with Image.open(tpath) as img_obj:
-            h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
+            h_res = build_histogram(
+                img_obj,
+                bundle,
+                normalization=norm_mode,
+                assignment=assignment,
+                sigma=sigma,
+                k_nearest=k_nearest,
+            )
         sample_items.append((tpath.name, h_res))
     else:
         for rec in select_representative_test_records(bundle):
             with Image.open(resolve_record_path(rec["path"])) as img_obj:
-                h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
+                h_res = build_histogram(
+                    img_obj,
+                    bundle,
+                    normalization=norm_mode,
+                    assignment=assignment,
+                    sigma=sigma,
+                    k_nearest=k_nearest,
+                )
             label = str(rec["class_name"])
             if rec.get("split") == "train":
                 label += " (training image)"
@@ -790,7 +1001,12 @@ def compute_histogram_outputs(
 
     if not sample_items and parameters.get("fallback_image") is not None:
         h_res = build_histogram(
-            parameters["fallback_image"], bundle, normalization=norm_mode
+            parameters["fallback_image"],
+            bundle,
+            normalization=norm_mode,
+            assignment=assignment,
+            sigma=sigma,
+            k_nearest=k_nearest,
         )
         sample_items.append(("Test image", h_res))
 
@@ -856,11 +1072,22 @@ class HistogramConstructionTool(ForensicsTool):
         top_bin = int(np.argmax(first_res["histogram"]))
         top_freq = float(first_res["histogram"][top_bin])
 
+        assignment = str(params.get("assignment", "hard")).strip().lower()
+        k_near = params.get("k_nearest")
+        sigma_val = params.get("sigma")
+        if assignment == "soft":
+            strat_label = (
+                f"Soft assignment (Gaussian kernel, k={k_near or 'all'}, "
+                f"sigma={sigma_val if sigma_val is not None else 'auto'})"
+            )
+        else:
+            strat_label = "Hard assignment (Nearest Centroid, Euclidean L2)"
+
         details: dict[str, Any] = {
             "Codebook ID": bundle["codebook_id"],
             "Visual word bins (K)": bundle["metadata"]["n_clusters"],
             "Locked descriptor": bundle["descriptor_config"]["method"],
-            "Assignment strategy": "Hard assignment (Euclidean L2)",
+            "Assignment strategy": strat_label,
             "Normalisation": norm_mode.upper(),
             "Visualised test images": len(sample_items),
             f"{first_label} keypoints": len(first_res["keypoints"]),

@@ -410,6 +410,7 @@ class FaceAnalysisTests(unittest.TestCase):
             self.assertIn("Test accuracy", train_res.details)
 
             # Verify required model files exist on disk
+            self.assertTrue((model_dir / "pca_model.joblib").exists())
             self.assertTrue((model_dir / "pca_model.npz").exists())
             self.assertTrue((model_dir / "metadata.json").exists())
             self.assertTrue((model_dir / "training_embeddings.npy").exists())
@@ -421,6 +422,9 @@ class FaceAnalysisTests(unittest.TestCase):
 
             # 2. Reload persisted models and run FaceRecognitionTool
             loaded_pca = load_eigenface_model(model_dir)
+            loaded_pca_joblib = load_eigenface_model(model_dir / "pca_model.joblib")
+            self.assertEqual(loaded_pca["model_id"], loaded_pca_joblib["model_id"])
+            np.testing.assert_allclose(loaded_pca["components"], loaded_pca_joblib["components"])
             loaded_knn = load_knn_classifier(
                 model_dir / "knn_classifier.joblib",
                 expected_pca_model_id=loaded_pca["model_id"],

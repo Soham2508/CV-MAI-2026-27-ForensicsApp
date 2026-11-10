@@ -30,6 +30,7 @@ from forensics_app.tools.codebook_construction import (
 )
 from forensics_app.tools.histogram_construction import (
     assign_descriptors_to_words,
+    assign_descriptors_to_words_soft,
     build_and_save_histogram_datasets,
     build_histogram,
     load_histogram_dataset,
@@ -267,6 +268,60 @@ class VisualVocabularyTests(unittest.TestCase):
         h_raw = normalize_histogram(counts, "none")
         np.testing.assert_allclose(h_raw, np.array([1.0, 2.0, 1.0], dtype=np.float32))
 
+    def test_soft_assignment_weights_and_histogram(self) -> None:
+        """Verify Gaussian kernel soft assignment weights and row sums."""
+        codebook = np.array(
+            [
+                [0.0, 0.0, 0.0, 0.0],
+                [10.0, 0.0, 0.0, 0.0],
+                [0.0, 10.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+        descriptors = np.array(
+            [
+                [0.1, -0.1, 0.0, 0.0],  # closest to word 0
+                [9.8, 0.2, 0.0, 0.0],  # closest to word 1
+                [10.2, -0.1, 0.0, 0.0],  # closest to word 1
+                [0.0, 9.5, 0.0, 0.0],  # closest to word 2
+            ],
+            dtype=np.float32,
+        )
+        # Test 1: soft assignment with k_nearest=1 equals hard assignment
+        words, dists, weights_k1 = assign_descriptors_to_words_soft(
+            descriptors, codebook, k_nearest=1
+        )
+        np.testing.assert_array_equal(words, np.array([0, 1, 1, 2]))
+        expected_hard_weights = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=np.float32,
+        )
+        np.testing.assert_allclose(weights_k1, expected_hard_weights)
+
+        # Test 2: soft assignment with k_nearest=2 distributes probability over 2 words
+        _, _, weights_k2 = assign_descriptors_to_words_soft(
+            descriptors, codebook, sigma=5.0, k_nearest=2
+        )
+        np.testing.assert_allclose(np.sum(weights_k2, axis=1), np.ones(4, dtype=np.float32))
+        # Word 1 should have highest weight for descriptor 1 and 2
+        self.assertGreater(weights_k2[1, 1], weights_k2[1, 0])
+        self.assertGreater(weights_k2[2, 1], weights_k2[2, 0])
+        # Each row should have exactly 1 zero weight because k_nearest=2 out of 3 centroids
+        self.assertEqual(np.sum(weights_k2 == 0.0), 4)
+
+        # Test 3: empty descriptors
+        empty_words, empty_dists, empty_weights = assign_descriptors_to_words_soft(
+            np.empty((0, 4), dtype=np.float32), codebook
+        )
+        self.assertEqual(len(empty_words), 0)
+        self.assertEqual(len(empty_dists), 0)
+        self.assertEqual(empty_weights.shape, (0, 3))
+
     def test_histogram_dataset_batch_generation_and_codebook_compatibility(
         self,
     ) -> None:
@@ -304,6 +359,25 @@ class VisualVocabularyTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "does not match"):
                 load_histogram_dataset(cb_dir, expected_codebook_id="incompatible_id")
+
+            # Batch generation with soft assignment
+            soft_hist_out = build_and_save_histogram_datasets(
+                loaded_cb, assignment="soft", normalization="l1"
+            )
+            self.assertEqual(soft_hist_out["metadata"]["assignment"], "soft")
+            self.assertEqual(soft_hist_out["X_train"].shape, (6, 12))
+            reloaded_soft = load_histogram_dataset(
+                cb_dir,
+                expected_codebook_id=loaded_cb["codebook_id"],
+                expected_assignment="soft",
+            )
+            self.assertEqual(reloaded_soft["metadata"]["assignment"], "soft")
+            with self.assertRaisesRegex(ValueError, "assignment"):
+                load_histogram_dataset(
+                    cb_dir,
+                    expected_codebook_id=loaded_cb["codebook_id"],
+                    expected_assignment="hard",
+                )
 
     def test_classifier_training_probability_calibration_and_image_classification(
         self,

@@ -6,7 +6,10 @@
     "dalmatian",
     "kangaroo"
   ],
-  "normalization": "l2",
+  "normalization": "l1",
+  "assignment": "hard",
+  "sigma": null,
+  "k_nearest": null,
   "num_train": 183,
   "num_test": 61,
   "train_records": [
