@@ -20,7 +20,7 @@ class DescriptorExtractionTests(unittest.TestCase):
         for i in range(10, 90, 15):
             for j in range(10, 90, 15):
                 arr[i : i + 6, j : j + 6] = 255
-        return Image.fromarray(arr, mode="L")
+        return Image.fromarray(arr)
 
     def test_extract_descriptors_orb_returns_keypoints_descriptors_and_image(
         self,

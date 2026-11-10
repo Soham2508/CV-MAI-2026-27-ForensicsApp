@@ -13,6 +13,7 @@ from skimage import measure, transform
 from skimage.feature import match_descriptors
 
 from forensics_app.core import ImageDocument
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 from .image_matching import extract_descriptors, plot_matches
@@ -174,14 +175,19 @@ def find_best_image_match(
         except (OSError, ValueError):
             continue
 
-        cand_kp, cand_desc = extract_descriptors(
-            cand_img,
-            method=method,
-            n_keypoints=n_keypoints,
-            n_octaves=n_octaves,
-            n_scales=n_scales,
-            sigma_min=sigma_min,
-        )
+        try:
+            cand_kp, cand_desc = extract_descriptors(
+                cand_img,
+                method=method,
+                n_keypoints=n_keypoints,
+                n_octaves=n_octaves,
+                n_scales=n_scales,
+                sigma_min=sigma_min,
+            )
+        except ValueError:
+            # e.g. an image smaller than the method's minimum size: skip it
+            # instead of aborting the whole search.
+            continue
 
         if len(cand_desc) == 0:
             continue
@@ -551,7 +557,13 @@ class BestImageMatchInDirTool(ForensicsTool):
             **desc_settings,
         }
 
-        best = find_best_image_match(
+        # The search extracts features from every image in the folder: run it
+        # off the UI thread with a progress window.
+        best = run_with_progress(
+            parent,
+            "Best image match in directory",
+            f"Searching {folder_path.name or folder_path} for the best match…",
+            find_best_image_match,
             query_image=query_image,
             query_path=document.path,
             folder_path=folder_path,

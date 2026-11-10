@@ -18,12 +18,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
+from matplotlib import colormaps
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.offsetbox import AnnotationBbox, OffsetImage
-import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import resolve_path
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 from .codebook_construction import (
@@ -32,8 +36,22 @@ from .codebook_construction import (
     extract_local_descriptors_from_image,
     find_latest_codebook_dir,
     load_codebook,
+    portable_path,
+    resolve_record_path,
 )
 from .hog_person_detection import IMAGE_TYPES
+
+NORMALIZATION_ALIASES = {
+    "l1": "l1",
+    "freq": "l1",
+    "frequency": "l1",
+    "normalized": "l1",
+    "l2": "l2",
+    "none": "none",
+    "raw": "none",
+    "counts": "none",
+    "": "none",
+}
 
 
 def assign_descriptors_to_words(
@@ -58,10 +76,19 @@ def assign_descriptors_to_words(
             f"Descriptor shape {descs.shape} does not match codebook {centroids.shape}."
         )
 
-    # Compute pairwise squared Euclidean distances: ||d||^2 + ||c||^2 - 2 d . c^T
+    if not (np.isfinite(descs).all() and np.isfinite(centroids).all()):
+        raise ValueError("Descriptors and codebook must contain only finite values.")
+
+    # Pairwise squared Euclidean distances: ||d||^2 + ||c||^2 - 2 d . c^T.
+    # SIFT values are at most 255, so float32 cannot overflow here. With NumPy 2
+    # on macOS, Apple's Accelerate BLAS can leave floating-point flags set and
+    # NumPy then reports spurious divide/overflow/invalid warnings for matmul;
+    # the inputs were checked above, so those warnings are silenced.
     d_sq = np.sum(descs * descs, axis=1, keepdims=True)
     c_sq = np.sum(centroids * centroids, axis=1, keepdims=True).T
-    sq_dists = np.maximum(0.0, d_sq + c_sq - 2.0 * (descs @ centroids.T))
+    with np.errstate(divide="ignore", over="ignore", invalid="ignore"):
+        cross = descs @ centroids.T
+    sq_dists = np.maximum(0.0, d_sq + c_sq - 2.0 * cross)
     word_indices = np.argmin(sq_dists, axis=1).astype(np.int64)
     min_dists = np.sqrt(sq_dists[np.arange(len(descs)), word_indices]).astype(
         np.float32
@@ -69,22 +96,41 @@ def assign_descriptors_to_words(
     return word_indices, min_dists
 
 
+def canonical_normalization(normalization: str) -> str:
+    """Map a normalisation name or alias to 'l1', 'l2' or 'none'."""
+    norm_mode = str(normalization).strip().lower()
+    if norm_mode not in NORMALIZATION_ALIASES:
+        raise ValueError(f"Unsupported histogram normalization: {normalization!r}")
+    return NORMALIZATION_ALIASES[norm_mode]
+
+
+def normalize_histograms(
+    counts: np.ndarray,
+    normalization: str = "l1",
+) -> np.ndarray:
+    """Normalise each row of an ``(N, K)`` count matrix ('l1', 'l2' or 'none').
+
+    All-zero rows (images without descriptors) stay zero.
+    """
+    hist = np.asarray(counts, dtype=np.float32)
+    norm_mode = canonical_normalization(normalization)
+    if norm_mode == "none":
+        return hist.copy()
+    if norm_mode == "l1":
+        totals = np.sum(np.abs(hist), axis=-1, keepdims=True)
+    else:
+        totals = np.linalg.norm(hist, axis=-1, keepdims=True)
+    return np.divide(
+        hist, totals, out=np.zeros_like(hist), where=totals > 0.0
+    ).astype(np.float32)
+
+
 def normalize_histogram(
     counts: np.ndarray,
     normalization: str = "l1",
 ) -> np.ndarray:
     """Normalise a 1D visual-word count histogram using 'l1', 'l2', or 'none'."""
-    hist = np.asarray(counts, dtype=np.float32).reshape(-1)
-    norm_mode = str(normalization).strip().lower()
-    if norm_mode in ("l1", "freq", "frequency", "normalized"):
-        total = float(np.sum(np.abs(hist)))
-        return hist / total if total > 0.0 else hist
-    if norm_mode == "l2":
-        norm_val = float(np.linalg.norm(hist))
-        return hist / norm_val if norm_val > 0.0 else hist
-    if norm_mode in ("none", "raw", "counts", ""):
-        return hist
-    raise ValueError(f"Unsupported histogram normalization: {normalization!r}")
+    return normalize_histograms(np.asarray(counts).reshape(-1), normalization)
 
 
 def build_histogram(
@@ -114,7 +160,7 @@ def build_histogram(
         "distances": distances,
         "gray_image": gray_pil,
         "n_clusters": k_words,
-        "normalization": str(normalization).strip().lower(),
+        "normalization": canonical_normalization(normalization),
     }
 
 
@@ -137,9 +183,13 @@ def generate_histogram_dataset(
     for idx, rec in enumerate(records):
         if progress_callback is not None and (idx % 5 == 0 or idx == total_recs - 1):
             progress_callback(idx + 1, total_recs)
-        img_path = Path(rec["path"])
-        if not img_path.exists():
-            continue
+        img_path = resolve_record_path(rec["path"])
+        if not img_path.is_file():
+            # Skipping it would silently shrink the split and skew accuracy.
+            raise ValueError(
+                f"Dataset image not found: {img_path}. Check that the dataset "
+                "folder used to build the codebook is available."
+            )
         with Image.open(img_path) as img:
             res = build_histogram(img, codebook_bundle, normalization=normalization)
         x_rows.append(res["histogram"])
@@ -174,8 +224,11 @@ def build_and_save_histogram_datasets(
     if not train_records:
         raise ValueError("Codebook metadata contains no training image records.")
 
-    model_dir = Path(codebook_bundle.get("model_dir", DEFAULT_VISUAL_WORDS_MODEL_DIR))
-    hist_dir = Path(output_dir) if output_dir else (model_dir / "histograms")
+    norm_mode = canonical_normalization(normalization)
+    model_dir = resolve_path(
+        codebook_bundle.get("model_dir", DEFAULT_VISUAL_WORDS_MODEL_DIR)
+    )
+    hist_dir = resolve_path(output_dir) if output_dir else (model_dir / "histograms")
     hist_dir.mkdir(parents=True, exist_ok=True)
 
     k_words = int(meta["n_clusters"])
@@ -185,9 +238,7 @@ def build_and_save_histogram_datasets(
         and isinstance(train_raw, np.ndarray)
         and train_raw.shape == (len(train_records), k_words)
     ):
-        X_train = np.vstack(
-            [normalize_histogram(row, normalization) for row in train_raw]
-        ).astype(np.float32)
+        X_train = normalize_histograms(train_raw, norm_mode)
         y_train = np.asarray(
             [int(r["class_id"]) for r in train_records], dtype=np.int64
         )
@@ -216,7 +267,7 @@ def build_and_save_histogram_datasets(
         "codebook_id": codebook_bundle["codebook_id"],
         "n_clusters": int(meta["n_clusters"]),
         "class_names": list(meta["class_names"]),
-        "normalization": str(normalization).strip().lower(),
+        "normalization": norm_mode,
         "num_train": int(len(X_train)),
         "num_test": int(len(X_test)),
         "train_records": kept_train,
@@ -239,9 +290,14 @@ def load_histogram_dataset(
     histograms_or_codebook_dir: str | Path,
     *,
     expected_codebook_id: str | None = None,
+    expected_normalization: str | None = None,
 ) -> dict[str, Any]:
-    """Load saved train/test histogram matrices and verify codebook compatibility."""
-    base = Path(histograms_or_codebook_dir)
+    """Load saved train/test histogram matrices and verify codebook compatibility.
+
+    Raises ``ValueError`` when the saved matrices were built from another
+    codebook or (if ``expected_normalization`` is given) another normalisation.
+    """
+    base = resolve_record_path(histograms_or_codebook_dir)
     if base.is_file():
         base = base.parent
     hist_dir = base / "histograms" if (base / "histograms").is_dir() else base
@@ -263,6 +319,14 @@ def load_histogram_dataset(
             f"Histogram dataset codebook_id ({meta.get('codebook_id')}) does not match "
             f"selected codebook ({expected_codebook_id})."
         )
+    if expected_normalization is not None:
+        saved_norm = canonical_normalization(meta.get("normalization", "l1"))
+        wanted_norm = canonical_normalization(expected_normalization)
+        if saved_norm != wanted_norm:
+            raise ValueError(
+                f"Histogram dataset normalisation ({saved_norm}) does not match "
+                f"the requested normalisation ({wanted_norm})."
+            )
 
     X_train = np.asarray(np.load(x_tr_path), dtype=np.float32)
     y_train = np.asarray(np.load(y_tr_path), dtype=np.int64)
@@ -288,8 +352,8 @@ def load_histogram_dataset(
 
 
 def _draw_histogram_panel(
-    ax_img: plt.Axes,
-    ax_hist: plt.Axes,
+    ax_img: Axes,
+    ax_hist: Axes,
     hist_result: dict[str, Any],
     *,
     title_label: str,
@@ -306,7 +370,7 @@ def _draw_histogram_panel(
 
     ax_img.imshow(gray_pil, cmap="gray")
     if show_assignments and len(kps) > 0:
-        cmap = plt.get_cmap("tab20")
+        cmap = colormaps["tab20"]
         colors = [cmap(int(w) % 20) for w in words]
         ax_img.scatter(
             kps[:, 1],
@@ -332,7 +396,11 @@ def _draw_histogram_panel(
     )
     ax_hist.set_title("Histogram of visual words", fontsize=10)
     ax_hist.set_xlabel("Visual word index", fontsize=8.5)
-    ylabel = "Normalized frequency" if norm_mode != "none" else "Descriptor count"
+    ylabel = (
+        "Normalized frequency"
+        if canonical_normalization(norm_mode) != "none"
+        else "Descriptor count"
+    )
     ax_hist.set_ylabel(ylabel, fontsize=8.5)
     ax_hist.set_xlim(-0.8, k_words - 0.2)
     ymax = max(float(np.max(hist)) * 1.18, 0.05)
@@ -371,7 +439,7 @@ def render_test_histograms_visualization(
     """Render Set 7.2 test image visual-word histograms (1 or multiple rows)."""
     n_rows = max(1, len(sample_items))
     fig_h = max(3.6, 2.85 * n_rows)
-    fig = plt.figure(figsize=(12.0, fig_h), dpi=100)
+    fig = Figure(figsize=(12.0, fig_h), dpi=100)
     fig.subplots_adjust(
         left=0.04, right=0.98, top=0.92, bottom=0.09, wspace=0.22, hspace=0.42
     )
@@ -390,7 +458,6 @@ def render_test_histograms_visualization(
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -398,19 +465,24 @@ def render_test_histograms_visualization(
 def select_representative_test_records(
     codebook_bundle: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    """Select one test image record per class from the codebook's test split."""
+    """Select one test image record per class from the codebook's test split.
+
+    Without a test split, training images are used and marked with
+    ``"split": "train"`` so they are not presented as held-out images.
+    """
     meta = codebook_bundle["metadata"]
     test_records: list[dict[str, Any]] = list(meta.get("test_records", []))
     train_records: list[dict[str, Any]] = list(meta.get("train_records", []))
+    split = "test" if test_records else "train"
     source = test_records if test_records else train_records
 
     selected: list[dict[str, Any]] = []
     seen_classes: set[str] = set()
     for rec in source:
         cname = str(rec.get("class_name", ""))
-        if cname not in seen_classes and Path(rec["path"]).exists():
+        if cname not in seen_classes and resolve_record_path(rec["path"]).is_file():
             seen_classes.add(cname)
-            selected.append(rec)
+            selected.append({**rec, "split": split})
     return selected
 
 
@@ -425,7 +497,7 @@ def ask_histogram_construction_parameters(
     dialog.resizable(False, False)
     dialog.grab_set()
 
-    default_cb = str(find_latest_codebook_dir())
+    default_cb = portable_path(find_latest_codebook_dir())
     codebook_dir_var = tk.StringVar(value=default_cb)
     norm_var = tk.StringVar(value="l1")
     batch_var = tk.BooleanVar(value=True)
@@ -639,7 +711,7 @@ def ask_histogram_construction_parameters(
                 use_current = True
             elif mode == "custom_file":
                 cpath = custom_path_var.get().strip()
-                if not cpath or not Path(cpath).exists():
+                if not cpath or not resolve_path(cpath).is_file():
                     raise ValueError("Please select a valid test image file.")
                 test_img_path = cpath
 
@@ -667,6 +739,72 @@ def ask_histogram_construction_parameters(
     return result
 
 
+def compute_histogram_outputs(
+    parameters: dict[str, Any],
+) -> tuple[
+    dict[str, Any],
+    dict[str, Any] | None,
+    list[tuple[str, dict[str, Any]]],
+    Image.Image,
+]:
+    """Build/save the histogram matrices and render the figure (no Tkinter).
+
+    Runs in a worker thread behind ``run_with_progress``. Returns the codebook
+    bundle, the batch output (or ``None``), the visualised samples and the
+    rendered figure.
+    """
+    bundle = load_codebook(parameters.get("codebook_dir", find_latest_codebook_dir()))
+    norm_mode = canonical_normalization(str(parameters.get("normalization", "l1")))
+    batch_process = bool(parameters.get("batch_process", True))
+    show_assignments = bool(parameters.get("show_assignments", True))
+
+    batch_out: dict[str, Any] | None = None
+    if batch_process and bundle["metadata"].get("train_records"):
+        batch_out = build_and_save_histogram_datasets(
+            bundle,
+            normalization=norm_mode,
+            output_dir=parameters.get("output_dir"),
+        )
+
+    # Build test image visualisations
+    sample_items: list[tuple[str, dict[str, Any]]] = []
+    if parameters.get("test_image") is not None:
+        h_res = build_histogram(
+            parameters["test_image"], bundle, normalization=norm_mode
+        )
+        label = str(parameters.get("test_label", "Test image"))
+        sample_items.append((label, h_res))
+    elif parameters.get("test_image_path"):
+        tpath = resolve_record_path(parameters["test_image_path"])
+        with Image.open(tpath) as img_obj:
+            h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
+        sample_items.append((tpath.name, h_res))
+    else:
+        for rec in select_representative_test_records(bundle):
+            with Image.open(resolve_record_path(rec["path"])) as img_obj:
+                h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
+            label = str(rec["class_name"])
+            if rec.get("split") == "train":
+                label += " (training image)"
+            sample_items.append((label, h_res))
+
+    if not sample_items and parameters.get("fallback_image") is not None:
+        h_res = build_histogram(
+            parameters["fallback_image"], bundle, normalization=norm_mode
+        )
+        sample_items.append(("Test image", h_res))
+
+    if not sample_items:
+        raise ValueError("No test image available to visualise histogram.")
+
+    vis_image = render_test_histograms_visualization(
+        sample_items,
+        visual_word_patches=bundle.get("visual_word_patches"),
+        show_assignments=show_assignments,
+    )
+    return bundle, batch_out, sample_items, vis_image
+
+
 class HistogramConstructionTool(ForensicsTool):
     """Tool 02 — Histogram Construction (Set 7.2 Bag of Visual Words)."""
 
@@ -691,66 +829,28 @@ class HistogramConstructionTool(ForensicsTool):
             if parameters is None:
                 return None
 
-        t0 = time.perf_counter()
-        cb_dir = parameters.get("codebook_dir", find_latest_codebook_dir())
-        bundle = load_codebook(cb_dir)
-        norm_mode = str(parameters.get("normalization", "l1"))
-        batch_process = bool(parameters.get("batch_process", True))
-        show_assignments = bool(parameters.get("show_assignments", True))
-
-        def _pump_ui(_cur: int, _tot: int) -> None:
-            if parent is not None and hasattr(parent, "update_idletasks"):
-                try:
-                    parent.update_idletasks()
-                except Exception:
-                    pass
-
-        batch_out: dict[str, Any] | None = None
-        if batch_process and bundle["metadata"].get("train_records"):
-            batch_out = build_and_save_histogram_datasets(
-                bundle,
-                normalization=norm_mode,
-                output_dir=parameters.get("output_dir"),
-                progress_callback=_pump_ui,
+        params = dict(parameters)
+        if (
+            params.get("test_image") is None
+            and params.get("use_current_image")
+            and document.current is not None
+        ):
+            params["test_image"] = document.current.copy()
+            params["test_label"] = (
+                document.path.name if document.path else "Current image"
             )
+        elif document.current is not None:
+            params["fallback_image"] = document.current.copy()
 
-        # Build test image visualisations
-        sample_items: list[tuple[str, dict[str, Any]]] = []
-        if parameters.get("test_image") is not None:
-            img_obj = parameters["test_image"]
-            h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
-            label = str(parameters.get("test_label", "Test image"))
-            sample_items.append((label, h_res))
-        elif parameters.get("use_current_image") and document.current is not None:
-            h_res = build_histogram(document.current, bundle, normalization=norm_mode)
-            label = document.path.name if document.path else "Current image"
-            sample_items.append((label, h_res))
-        elif parameters.get("test_image_path"):
-            tpath = Path(parameters["test_image_path"])
-            with Image.open(tpath) as img_obj:
-                h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
-            sample_items.append((tpath.name, h_res))
-        else:
-            rep_records = select_representative_test_records(bundle)
-            for rec in rep_records:
-                rpath = Path(rec["path"])
-                with Image.open(rpath) as img_obj:
-                    h_res = build_histogram(img_obj, bundle, normalization=norm_mode)
-                sample_items.append((str(rec["class_name"]), h_res))
-
-        if not sample_items and document.current is not None:
-            h_res = build_histogram(document.current, bundle, normalization=norm_mode)
-            sample_items.append(("Test image", h_res))
-
-        if not sample_items:
-            raise ValueError("No test image available to visualise histogram.")
-
-        vis_image = render_test_histograms_visualization(
-            sample_items,
-            visual_word_patches=bundle.get("visual_word_patches"),
-            show_assignments=show_assignments,
+        t0 = time.perf_counter()
+        bundle, batch_out, sample_items, vis_image = run_with_progress(
+            parent,
+            "Histogram Construction",
+            "Assigning descriptors to visual words and building histograms…",
+            compute_histogram_outputs,
+            params,
         )
-
+        norm_mode = canonical_normalization(str(parameters.get("normalization", "l1")))
         elapsed_s = time.perf_counter() - t0
         first_label, first_res = sample_items[0]
         top_bin = int(np.argmax(first_res["histogram"]))

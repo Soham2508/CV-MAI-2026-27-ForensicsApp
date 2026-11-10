@@ -8,7 +8,7 @@ Provides both:
      descriptors, builds and visualises the K-dimensional visual-word histogram
      (from 7.2), and upon clicking "Classify" runs the trained classifier and
      displays the top probability ``p(class) = ...`` along with the full class
-     probability distribution.
+     probability distribution (as text in the dialog, as a figure in the result).
 """
 
 from __future__ import annotations
@@ -19,12 +19,13 @@ from pathlib import Path
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+import tkinter.font as tkfont
 from typing import Any
 
 import joblib
-import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
 import numpy as np
-from PIL import Image, ImageTk
+from PIL import Image
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
@@ -32,6 +33,8 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.svm import SVC
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import resolve_path
+from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 from .codebook_construction import (
@@ -39,11 +42,14 @@ from .codebook_construction import (
     ensure_document_has_image,
     find_latest_codebook_dir,
     load_codebook,
+    portable_path,
+    resolve_record_path,
 )
 from .histogram_construction import (
     _draw_histogram_panel,
     build_and_save_histogram_datasets,
     build_histogram,
+    canonical_normalization,
     load_histogram_dataset,
 )
 from .hog_person_detection import IMAGE_TYPES
@@ -209,7 +215,7 @@ def train_classifier(
         "codebook_id": str(codebook_id),
         "n_clusters": int(X_tr.shape[1]),
         "class_names": list(class_names),
-        "normalization": str(normalization).strip().lower(),
+        "normalization": canonical_normalization(normalization),
         "algorithm_key": alg_key,
         "algorithm": _display_algorithm_name(alg_key),
         "C": float(C),
@@ -244,14 +250,14 @@ def save_classifier(
     output_dir: str | Path = DEFAULT_VISUAL_WORDS_MODEL_DIR,
 ) -> dict[str, Path]:
     """Save ``classifier.joblib`` and ``classifier_config.json`` in ``output_dir``."""
-    out_dir = Path(output_dir)
+    out_dir = resolve_path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     clf_path = out_dir / "classifier.joblib"
     cfg_path = out_dir / "classifier_config.json"
 
     joblib.dump(classifier_bundle["classifier"], clf_path)
     cfg = dict(classifier_bundle["config"])
-    cfg["model_dir"] = str(out_dir)
+    cfg["model_dir"] = portable_path(out_dir)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
 
@@ -267,8 +273,12 @@ def load_classifier(
     *,
     expected_codebook_id: str | None = None,
 ) -> dict[str, Any]:
-    """Load a persisted classifier and verify compatibility with the codebook."""
-    target = Path(model_path_or_dir)
+    """Load a persisted classifier and verify compatibility with the codebook.
+
+    With ``expected_codebook_id``, a classifier saved without a codebook ID is
+    rejected too, since there is no way to tell which codebook it belongs to.
+    """
+    target = resolve_record_path(model_path_or_dir)
     if target.is_file():
         if target.suffix == ".joblib":
             clf_path = target
@@ -289,11 +299,7 @@ def load_classifier(
     with open(cfg_path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    if (
-        expected_codebook_id
-        and config.get("codebook_id")
-        and config.get("codebook_id") != expected_codebook_id
-    ):
+    if expected_codebook_id and config.get("codebook_id") != expected_codebook_id:
         raise ValueError(
             f"Classifier codebook_id ({config.get('codebook_id')}) does not match "
             f"selected codebook ({expected_codebook_id})."
@@ -311,29 +317,27 @@ def classify_image(
     image: Image.Image,
     codebook_bundle: dict[str, Any],
     classifier_bundle: dict[str, Any],
+    *,
+    render: bool = True,
 ) -> dict[str, Any]:
     """Classify a single image using the codebook and trained classifier (Set 7.3).
 
     Extracts descriptors with the codebook's locked extractor, builds the visual-word
     histogram with the classifier's normalisation, runs ``predict_proba``, and returns
     the top predicted class, top probability ``p(class)``, full class probability list,
-    and the rendered classification figure.
+    and (when ``render`` is true) the rendered classification figure.
     """
     t0 = time.perf_counter()
     cfg = classifier_bundle["config"]
     cb_meta = codebook_bundle["metadata"]
 
-    if (
-        cfg.get("codebook_id")
-        and codebook_bundle.get("codebook_id")
-        and cfg["codebook_id"] != codebook_bundle["codebook_id"]
-    ):
+    if cfg.get("codebook_id") != codebook_bundle.get("codebook_id"):
         raise ValueError(
             f"Model mismatch: classifier was trained on codebook {cfg['codebook_id']}, "
             f"but current codebook is {codebook_bundle['codebook_id']}."
         )
 
-    norm_mode = str(cfg.get("normalization", "l1"))
+    norm_mode = canonical_normalization(str(cfg.get("normalization", "l1")))
     hist_res = build_histogram(image, codebook_bundle, normalization=norm_mode)
     hist_vec = hist_res["histogram"].reshape(1, -1)
 
@@ -385,12 +389,78 @@ def classify_image(
         "processing_time_ms": elapsed_ms,
         "input_image": image.convert("RGB"),
     }
-    result_data["visualization_image"] = render_classification_visualization(
-        result_data,
-        visual_word_patches=codebook_bundle.get("visual_word_patches"),
-        classifier_config=cfg,
-    )
+    if render:
+        result_data["visualization_image"] = render_classification_visualization(
+            result_data,
+            visual_word_patches=codebook_bundle.get("visual_word_patches"),
+            classifier_config=cfg,
+        )
     return result_data
+
+
+def load_or_build_histograms(
+    codebook_bundle: dict[str, Any],
+    normalization: str = "l1",
+) -> dict[str, Any]:
+    """Return the codebook's histogram matrices with the requested normalisation.
+
+    Saved matrices are reused only when they come from this codebook and use
+    this normalisation; otherwise they are rebuilt (and saved).
+    """
+    try:
+        return load_histogram_dataset(
+            codebook_bundle["model_dir"],
+            expected_codebook_id=codebook_bundle["codebook_id"],
+            expected_normalization=normalization,
+        )
+    except (ValueError, OSError):
+        return build_and_save_histogram_datasets(
+            codebook_bundle, normalization=normalization
+        )
+
+
+def train_and_save_classifier(
+    codebook_bundle: dict[str, Any],
+    settings: dict[str, Any],
+) -> dict[str, Any]:
+    """Train a classifier on the codebook's histograms and save it next to it.
+
+    ``settings`` holds the dialog/tool parameters. Runs in a worker thread
+    behind ``run_with_progress`` (no Tkinter access).
+    """
+    norm_mode = canonical_normalization(str(settings.get("normalization", "l1")))
+    hist_ds = load_or_build_histograms(codebook_bundle, norm_mode)
+    clf_bundle = train_classifier(
+        hist_ds["X_train"],
+        hist_ds["y_train"],
+        class_names=codebook_bundle["metadata"]["class_names"],
+        codebook_id=codebook_bundle["codebook_id"],
+        normalization=norm_mode,
+        algorithm=str(settings.get("algorithm", "linear_svm")),
+        C=float(settings.get("C", 1.0)),
+        gamma=settings.get("gamma", "scale"),
+        class_weight=settings.get("class_weight"),
+        n_neighbors=int(settings.get("n_neighbors", 5)),
+        knn_weights=str(settings.get("knn_weights", "distance")),
+        knn_metric=str(settings.get("knn_metric", "euclidean")),
+        n_estimators=int(settings.get("n_estimators", 100)),
+        max_depth=settings.get("max_depth"),
+        min_samples_leaf=int(settings.get("min_samples_leaf", 1)),
+        random_state=int(settings.get("random_state", 42)),
+        X_test=hist_ds["X_test"],
+        y_test=hist_ds["y_test"],
+    )
+    save_classifier(clf_bundle, output_dir=codebook_bundle["model_dir"])
+    return clf_bundle
+
+
+def saved_histogram_normalization(codebook_dir: str | Path) -> str | None:
+    """Return the normalisation of the saved histograms, or ``None``."""
+    try:
+        meta = load_histogram_dataset(codebook_dir)["metadata"]
+        return canonical_normalization(meta.get("normalization", "l1"))
+    except (ValueError, OSError):
+        return None
 
 
 def render_classification_visualization(
@@ -408,7 +478,7 @@ def render_classification_visualization(
     class_probs = classification_result["class_probabilities"]
     alg_name = classification_result.get("classifier_algorithm", "Linear SVM")
 
-    fig = plt.figure(figsize=(13.5, 7.6), dpi=100)
+    fig = Figure(figsize=(13.5, 7.6), dpi=100)
     fig.suptitle(
         f"Set 7.3 — Bag of Visual Words Classification ({alg_name})   |   {prob_label}",
         fontsize=13,
@@ -487,7 +557,7 @@ def render_classification_visualization(
     if conf_mat is not None and len(conf_mat) > 0:
         cm_arr = np.asarray(conf_mat, dtype=np.int64)
         im = ax_info.imshow(cm_arr, cmap="Blues")
-        plt.colorbar(im, ax=ax_info, fraction=0.046, pad=0.04)
+        fig.colorbar(im, ax=ax_info, fraction=0.046, pad=0.04)
         ax_info.set_xticks(np.arange(len(all_classes)))
         ax_info.set_yticks(np.arange(len(all_classes)))
         ax_info.set_xticklabels(all_classes, fontsize=8.5, rotation=20)
@@ -528,59 +598,6 @@ def render_classification_visualization(
 
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.1)
-    plt.close(fig)
-    buf.seek(0)
-    return Image.open(buf).convert("RGB")
-
-
-def _render_preview_strip(
-    image: Image.Image,
-    hist_res: dict[str, Any],
-    *,
-    prediction_text: str | None = None,
-) -> Image.Image:
-    """Render a compact [Input Image + Visual-Word Histogram] preview for dialog."""
-    fig = plt.figure(figsize=(8.2, 3.0), dpi=90)
-    gs = fig.add_gridspec(
-        1,
-        2,
-        width_ratios=[0.85, 1.45],
-        left=0.04,
-        right=0.98,
-        top=0.86,
-        bottom=0.18,
-        wspace=0.24,
-    )
-    ax_img = fig.add_subplot(gs[0, 0])
-    ax_img.imshow(image.convert("RGB"))
-    title_str = prediction_text if prediction_text else "Selected Test Image"
-    ax_img.set_title(
-        title_str,
-        fontsize=11 if prediction_text else 9.5,
-        fontweight="bold",
-        color="#2f855a" if prediction_text else "#1a202c",
-    )
-    ax_img.set_xticks(())
-    ax_img.set_yticks(())
-
-    ax_hist = fig.add_subplot(gs[0, 1])
-    k_words = hist_res["n_clusters"]
-    bins = np.arange(k_words)
-    hist = hist_res["histogram"]
-    ax_hist.bar(bins, hist, width=0.8, color="#3182ce", edgecolor="#1a365d")
-    ax_hist.set_title(
-        f"Histogram of visual words "
-        f"(K={k_words}, keypoints={len(hist_res['keypoints'])})",
-        fontsize=9.5,
-    )
-    ax_hist.set_xlabel("Visual word index", fontsize=8)
-    ax_hist.set_ylabel("Normalized frequency", fontsize=8)
-    ax_hist.set_xlim(-0.8, k_words - 0.2)
-    ax_hist.grid(axis="y", linestyle="--", alpha=0.3)
-
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png", bbox_inches="tight", pad_inches=0.06)
-    plt.close(fig)
     buf.seek(0)
     return Image.open(buf).convert("RGB")
 
@@ -596,7 +613,7 @@ def ask_image_classification_parameters(
     dialog.resizable(False, False)
     dialog.grab_set()
 
-    default_cb = str(find_latest_codebook_dir())
+    default_cb = portable_path(find_latest_codebook_dir())
     codebook_dir_var = tk.StringVar(value=default_cb)
 
     # Section A: Classifier Training variables
@@ -607,7 +624,7 @@ def ask_image_classification_parameters(
     class_weight_var = tk.StringVar(value="None")
     knn_k_var = tk.IntVar(value=5)
     rf_trees_var = tk.IntVar(value=100)
-    norm_var = tk.StringVar(value="l1")
+    norm_var = tk.StringVar(value=saved_histogram_normalization(default_cb) or "l1")
     seed_var = tk.IntVar(value=42)
 
     # Section B: Classification / Inference variables
@@ -619,12 +636,11 @@ def ask_image_classification_parameters(
     cb_status_var = tk.StringVar(value="")
     clf_status_var = tk.StringVar(value="")
     pred_headline_var = tk.StringVar(
-        value="Click 'Classify' to run the trained classifier."
+        value="Select an image and click 'Classify' to run the trained classifier."
     )
     pred_dist_var = tk.StringVar(value="")
 
     test_choices: list[dict[str, Any]] = []
-    preview_photo_ref: list[ImageTk.PhotoImage] = []
     cached_bundle: dict[str, Any] | None = None
     cached_clf_bundle: dict[str, Any] | None = None
 
@@ -657,15 +673,18 @@ def ask_image_classification_parameters(
                 f"Classes: {', '.join(meta['class_names'])} | "
                 f"ID: {cached_bundle['codebook_id']}"
             )
-            test_choices = list(meta.get("test_records", [])) or list(
-                meta.get("train_records", [])
-            )
+            held_out = list(meta.get("test_records", []))
+            test_choices = held_out or list(meta.get("train_records", []))
+            # Without a test split, say so instead of passing training images
+            # off as held-out ones.
+            tag = "" if held_out else " (training image)"
             if test_combo_ref:
                 combo = test_combo_ref[0]
                 if test_choices:
                     combo.configure(
                         values=[
-                            f"[{r['class_name']}] {r['filename']}" for r in test_choices
+                            f"[{r['class_name']}] {r['filename']}{tag}"
+                            for r in test_choices
                         ]
                     )
                     combo.current(0)
@@ -705,8 +724,8 @@ def ask_image_classification_parameters(
         )
         if chosen:
             codebook_dir_var.set(chosen)
+            norm_var.set(saved_histogram_normalization(chosen) or norm_var.get())
             _refresh_model_state()
-            _update_histogram_preview()
 
     ttk.Button(top_frame, text="Browse…", command=_browse_cb).grid(
         row=0, column=2, pady=2
@@ -775,6 +794,32 @@ def ask_image_classification_parameters(
         width=8,
     ).grid(row=1, column=5, sticky="w", padx=6, pady=2)
 
+    ttk.Label(train_frame, text="Histogram normalisation:").grid(
+        row=3, column=0, sticky="w", pady=2
+    )
+    ttk.Combobox(
+        train_frame,
+        textvariable=norm_var,
+        values=("l1", "l2", "none"),
+        state="readonly",
+        width=8,
+    ).grid(row=3, column=1, sticky="w", padx=6, pady=2)
+
+    def _training_settings() -> dict[str, Any]:
+        """Read the training settings from the widgets (main thread only)."""
+        return {
+            "algorithm": alg_var.get(),
+            "C": float(svm_c_var.get()),
+            "gamma": svm_gamma_var.get(),
+            "class_weight": None
+            if class_weight_var.get() == "None"
+            else class_weight_var.get(),
+            "n_neighbors": int(knn_k_var.get()),
+            "n_estimators": int(rf_trees_var.get()),
+            "normalization": norm_var.get(),
+            "random_state": int(seed_var.get()),
+        }
+
     def _run_training_now() -> None:
         nonlocal cached_clf_bundle
         try:
@@ -782,38 +827,14 @@ def ask_image_classification_parameters(
                 _refresh_model_state()
             if cached_bundle is None:
                 raise ValueError("Please select a valid codebook directory first.")
-
-            cb_dir = Path(codebook_dir_var.get().strip())
-            norm_m = norm_var.get()
-            try:
-                hist_ds = load_histogram_dataset(
-                    cb_dir, expected_codebook_id=cached_bundle["codebook_id"]
-                )
-            except Exception:
-                hist_ds = build_and_save_histogram_datasets(
-                    cached_bundle, normalization=norm_m
-                )
-
-            trained = train_classifier(
-                hist_ds["X_train"],
-                hist_ds["y_train"],
-                class_names=cached_bundle["metadata"]["class_names"],
-                codebook_id=cached_bundle["codebook_id"],
-                normalization=hist_ds["metadata"].get("normalization", norm_m),
-                algorithm=alg_var.get(),
-                C=float(svm_c_var.get()),
-                gamma=svm_gamma_var.get(),
-                class_weight=None
-                if class_weight_var.get() == "None"
-                else class_weight_var.get(),
-                n_neighbors=int(knn_k_var.get()),
-                n_estimators=int(rf_trees_var.get()),
-                random_state=int(seed_var.get()),
-                X_test=hist_ds["X_test"],
-                y_test=hist_ds["y_test"],
+            cached_clf_bundle = run_with_progress(
+                dialog,
+                "Classifier Training",
+                "Building histograms (if needed) and training the classifier…",
+                train_and_save_classifier,
+                cached_bundle,
+                _training_settings(),
             )
-            save_classifier(trained, output_dir=cb_dir)
-            cached_clf_bundle = trained
             _refresh_model_state()
         except Exception as exc:
             messagebox.showerror("Classifier Training Failed", str(exc), parent=dialog)
@@ -831,8 +852,7 @@ def ask_image_classification_parameters(
     inf_frame = ttk.LabelFrame(
         main,
         text=(
-            "3. Section B — New Image Selection, Histogram Visualisation "
-            "& Classify (Set 7.3)"
+            "3. Section B — New Image Selection & Classify (Set 7.3)"
         ),
         padding=8,
     )
@@ -847,57 +867,40 @@ def ask_image_classification_parameters(
             return document.current.copy()
         if mode == "test_split_image" and test_choices:
             idx = max(0, test_combo.current())
-            p = Path(test_choices[idx]["path"])
-            if p.exists():
+            p = resolve_record_path(test_choices[idx]["path"])
+            if p.is_file():
                 with Image.open(p) as im:
                     return im.copy()
         if mode == "custom_file":
-            cp = Path(custom_img_var.get().strip())
-            if cp.exists() and cp.is_file():
+            text = custom_img_var.get().strip()
+            cp = resolve_path(text) if text else None
+            if cp is not None and cp.is_file():
                 with Image.open(cp) as im:
                     return im.copy()
         return None
 
-    preview_label = ttk.Label(inf_frame)
-
-    def _update_histogram_preview(*_args: object) -> None:
-        if cached_bundle is None:
-            return
-        img_obj = _resolve_selected_image()
-        if img_obj is None:
-            return
-        try:
-            h_res = build_histogram(
-                img_obj, cached_bundle, normalization=norm_var.get()
-            )
-            strip = _render_preview_strip(img_obj, h_res)
-            photo = ImageTk.PhotoImage(strip)
-            preview_photo_ref.clear()
-            preview_photo_ref.append(photo)
-            preview_label.configure(image=photo)
-            pred_headline_var.set(
-                "Histogram visualised (7.2). Click 'Classify' to predict class."
-            )
-            pred_dist_var.set("")
-        except Exception:
-            pass
+    def _clear_prediction(*_args: object) -> None:
+        pred_headline_var.set(
+            "Select an image and click 'Classify' to run the trained classifier."
+        )
+        pred_dist_var.set("")
 
     ttk.Radiobutton(
         inf_frame,
         text="Held-out test image:",
         variable=source_mode_var,
         value="test_split_image",
-        command=_update_histogram_preview,
+        command=_clear_prediction,
     ).grid(row=0, column=0, sticky="w", pady=2)
     test_combo.grid(row=0, column=1, sticky="ew", padx=6, pady=2)
-    test_combo.bind("<<ComboboxSelected>>", _update_histogram_preview)
+    test_combo.bind("<<ComboboxSelected>>", _clear_prediction)
 
     rb_canvas = ttk.Radiobutton(
         inf_frame,
         text="Currently open canvas image",
         variable=source_mode_var,
         value="current_image",
-        command=_update_histogram_preview,
+        command=_clear_prediction,
     )
     rb_canvas.grid(row=0, column=2, sticky="w", padx=6, pady=2)
     if document.current is None:
@@ -908,7 +911,7 @@ def ask_image_classification_parameters(
         text="Custom image file:",
         variable=source_mode_var,
         value="custom_file",
-        command=_update_histogram_preview,
+        command=_clear_prediction,
     ).grid(row=1, column=0, sticky="w", pady=2)
     ttk.Entry(inf_frame, textvariable=custom_img_var, width=40).grid(
         row=1, column=1, sticky="ew", padx=6, pady=2
@@ -921,13 +924,11 @@ def ask_image_classification_parameters(
         if chosen:
             custom_img_var.set(chosen)
             source_mode_var.set("custom_file")
-            _update_histogram_preview()
+            _clear_prediction()
 
     ttk.Button(inf_frame, text="Browse Image…", command=_browse_img).grid(
         row=1, column=2, sticky="w", padx=6, pady=2
     )
-
-    preview_label.grid(row=2, column=0, columnspan=3, pady=6)
 
     # Interactive "Classify" button and probability readout (Slide 4)
     classify_bar = ttk.Frame(inf_frame)
@@ -950,16 +951,17 @@ def ask_image_classification_parameters(
             )
             return
         try:
-            cls_res = classify_image(img_obj, cached_bundle, cached_clf_bundle)
-            strip = _render_preview_strip(
+            # Text-only preview: no figure is rendered for the dialog.
+            cls_res = run_with_progress(
+                dialog,
+                "Image Classification",
+                "Extracting descriptors and classifying the image…",
+                classify_image,
                 img_obj,
-                cls_res["histogram_result"],
-                prediction_text=cls_res["probability_label"],
+                cached_bundle,
+                cached_clf_bundle,
+                render=False,
             )
-            photo = ImageTk.PhotoImage(strip)
-            preview_photo_ref.clear()
-            preview_photo_ref.append(photo)
-            preview_label.configure(image=photo)
             pred_headline_var.set(
                 f"Prediction: {cls_res['probability_label']}  "
                 f"({cls_res['top_probability'] * 100:.1f}%)"
@@ -978,22 +980,25 @@ def ask_image_classification_parameters(
         command=_on_interactive_classify,
     ).pack(side="left", padx=(0, 12))
 
+    # Derive fonts from the platform default (Segoe UI on Windows, SF on macOS)
+    # instead of naming a Windows-only family.
+    headline_font = tkfont.nametofont("TkDefaultFont").copy()
+    headline_font.configure(weight="bold")
     ttk.Label(
         classify_bar,
         textvariable=pred_headline_var,
-        font=("Segoe UI", 10, "bold"),
+        font=headline_font,
         foreground="#2f855a",
     ).pack(side="left")
 
     ttk.Label(
         inf_frame,
         textvariable=pred_dist_var,
-        font=("Segoe UI", 9),
         foreground="#2d3748",
+        wraplength=640,
     ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(2, 0))
 
     _refresh_model_state()
-    _update_histogram_preview()
 
     result: dict[str, Any] | None = None
 
@@ -1014,7 +1019,7 @@ def ask_image_classification_parameters(
                 use_current = True
             elif mode == "custom_file":
                 cpath = custom_img_var.get().strip()
-                if not cpath or not Path(cpath).exists():
+                if not cpath or not resolve_path(cpath).is_file():
                     raise ValueError("Please select a valid query image file.")
                 test_img_path = cpath
 
@@ -1050,6 +1055,52 @@ def ask_image_classification_parameters(
     return result
 
 
+def run_image_classification(
+    parameters: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Load or train the classifier and classify the query image (no Tkinter).
+
+    Runs in a worker thread behind ``run_with_progress``. Returns the codebook
+    bundle, the classifier bundle and the classification result.
+    """
+    codebook_bundle = load_codebook(
+        parameters.get("codebook_dir", find_latest_codebook_dir())
+    )
+    norm_mode = canonical_normalization(str(parameters.get("normalization", "l1")))
+
+    clf_bundle: dict[str, Any] | None = None
+    if not parameters.get("train_classifier", False):
+        try:
+            clf_bundle = load_classifier(
+                codebook_bundle["model_dir"],
+                expected_codebook_id=codebook_bundle["codebook_id"],
+            )
+        except Exception:
+            # Missing, stale or unreadable (e.g. other scikit-learn version).
+            clf_bundle = None
+    if clf_bundle is None:
+        clf_bundle = train_and_save_classifier(
+            codebook_bundle, {**parameters, "normalization": norm_mode}
+        )
+
+    # Resolve test image for classification
+    if parameters.get("test_image") is not None:
+        query_img = parameters["test_image"]
+    elif parameters.get("test_image_path"):
+        with Image.open(resolve_record_path(parameters["test_image_path"])) as im:
+            query_img = im.copy()
+    else:
+        meta = codebook_bundle["metadata"]
+        test_recs = meta.get("test_records") or meta.get("train_records", [])
+        if not test_recs:
+            raise ValueError("No query image provided for classification.")
+        with Image.open(resolve_record_path(test_recs[0]["path"])) as im:
+            query_img = im.copy()
+
+    cls_out = classify_image(query_img, codebook_bundle, clf_bundle)
+    return codebook_bundle, clf_bundle, cls_out
+
+
 class ImageClassificationTool(ForensicsTool):
     """Tool 03 — Image Classification (Set 7.3 Bag of Visual Words)."""
 
@@ -1074,72 +1125,19 @@ class ImageClassificationTool(ForensicsTool):
             if parameters is None:
                 return None
 
-        cb_dir = Path(parameters.get("codebook_dir", find_latest_codebook_dir()))
-        codebook_bundle = load_codebook(cb_dir)
-        norm_mode = str(parameters.get("normalization", "l1"))
+        params = dict(parameters)
+        if params.get("test_image") is None and document.current is not None:
+            if params.get("use_current_image") or not params.get("test_image_path"):
+                params["test_image"] = document.current.copy()
 
-        should_train = bool(parameters.get("train_classifier", False))
-        clf_bundle: dict[str, Any] | None = None
-        if not should_train:
-            try:
-                clf_bundle = load_classifier(
-                    cb_dir, expected_codebook_id=codebook_bundle["codebook_id"]
-                )
-            except Exception:
-                should_train = True
-
-        if should_train or clf_bundle is None:
-            try:
-                hist_ds = load_histogram_dataset(
-                    cb_dir, expected_codebook_id=codebook_bundle["codebook_id"]
-                )
-            except Exception:
-                hist_ds = build_and_save_histogram_datasets(
-                    codebook_bundle, normalization=norm_mode
-                )
-
-            clf_bundle = train_classifier(
-                hist_ds["X_train"],
-                hist_ds["y_train"],
-                class_names=codebook_bundle["metadata"]["class_names"],
-                codebook_id=codebook_bundle["codebook_id"],
-                normalization=hist_ds["metadata"].get("normalization", norm_mode),
-                algorithm=str(parameters.get("algorithm", "linear_svm")),
-                C=float(parameters.get("C", 1.0)),
-                gamma=parameters.get("gamma", "scale"),
-                class_weight=parameters.get("class_weight"),
-                n_neighbors=int(parameters.get("n_neighbors", 5)),
-                knn_weights=str(parameters.get("knn_weights", "distance")),
-                knn_metric=str(parameters.get("knn_metric", "euclidean")),
-                n_estimators=int(parameters.get("n_estimators", 100)),
-                max_depth=parameters.get("max_depth"),
-                min_samples_leaf=int(parameters.get("min_samples_leaf", 1)),
-                random_state=int(parameters.get("random_state", 42)),
-                X_test=hist_ds["X_test"],
-                y_test=hist_ds["y_test"],
-            )
-            save_classifier(clf_bundle, output_dir=cb_dir)
-
-        # Resolve test image for classification
-        if parameters.get("test_image") is not None:
-            query_img = parameters["test_image"]
-        elif parameters.get("use_current_image") and document.current is not None:
-            query_img = document.current
-        elif parameters.get("test_image_path"):
-            with Image.open(parameters["test_image_path"]) as im:
-                query_img = im.copy()
-        elif document.current is not None:
-            query_img = document.current
-        else:
-            test_recs = codebook_bundle["metadata"].get(
-                "test_records"
-            ) or codebook_bundle["metadata"].get("train_records", [])
-            if not test_recs:
-                raise ValueError("No query image provided for classification.")
-            with Image.open(test_recs[0]["path"]) as im:
-                query_img = im.copy()
-
-        cls_out = classify_image(query_img, codebook_bundle, clf_bundle)
+        codebook_bundle, clf_bundle, cls_out = run_with_progress(
+            parent,
+            "Image Classification",
+            "Loading the models (training the classifier if needed) and "
+            "classifying the image…",
+            run_image_classification,
+            params,
+        )
         cfg = clf_bundle["config"]
 
         details: dict[str, Any] = {

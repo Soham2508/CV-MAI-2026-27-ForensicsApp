@@ -25,6 +25,7 @@ from forensics_app.tools.codebook_construction import (
     extract_local_descriptors_from_image,
     load_codebook,
     load_visual_words_dataset,
+    resolve_record_path,
     save_codebook,
 )
 from forensics_app.tools.histogram_construction import (
@@ -33,10 +34,12 @@ from forensics_app.tools.histogram_construction import (
     build_histogram,
     load_histogram_dataset,
     normalize_histogram,
+    normalize_histograms,
 )
 from forensics_app.tools.image_classification import (
     classify_image,
     load_classifier,
+    load_or_build_histograms,
     train_classifier,
 )
 
@@ -47,7 +50,7 @@ def _make_synthetic_class_image(
     """Create a synthetic textured image with distinct local patterns per class."""
     rng = np.random.default_rng(seed)
     base = rng.integers(20, 60, size=(size, size), dtype=np.uint8)
-    img = Image.fromarray(base, mode="L")
+    img = Image.fromarray(base)
     draw = ImageDraw.Draw(img)
 
     if class_kind == "butterfly":
@@ -58,7 +61,7 @@ def _make_synthetic_class_image(
                 draw.line((c - 5, r + 5, c + 5, r - 5), fill=240, width=2)
     elif class_kind == "dalmatian":
         # High-contrast circular spots on bright background
-        img = Image.fromarray(230 - base, mode="L")
+        img = Image.fromarray(230 - base)
         draw = ImageDraw.Draw(img)
         for r in range(10, size - 10, 14):
             for c in range(10, size - 10, 14):
@@ -331,6 +334,90 @@ class VisualVocabularyTests(unittest.TestCase):
             self.assertEqual(len(probs), 3)
             self.assertAlmostEqual(float(np.sum(probs)), 1.0, places=5)
             self.assertEqual(int(np.argmax(probs)), 0)
+
+    def test_small_dataset_split_never_crashes_or_leaks(self) -> None:
+        """Tiny datasets fall back to a per-class split without train/test overlap."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ds_dir = self._populate_synthetic_dataset(
+                Path(tmp) / "ds", images_per_class=2
+            )
+            # 6 images at 25 % gives 2 test images for 3 classes: sklearn's
+            # stratified split would raise, so the per-class split is used.
+            ds = load_visual_words_dataset(ds_dir, test_size=0.25, random_state=0)
+            train_paths = {r["path"] for r in ds["train_records"]}
+            test_paths = {r["path"] for r in ds["test_records"]}
+            self.assertTrue(train_paths.isdisjoint(test_paths))
+            self.assertEqual(len(train_paths) + len(test_paths), 6)
+
+            # A class with a single image goes to training only.
+            single = Path(tmp) / "single"
+            for i, cname in enumerate(("butterfly", "dalmatian", "kangaroo")):
+                cdir = single / cname
+                cdir.mkdir(parents=True)
+                for j in range(1 if cname == "kangaroo" else 3):
+                    _make_synthetic_class_image(cname, seed=10 * i + j).save(
+                        cdir / f"img_{j:02d}.png"
+                    )
+            ds_single = load_visual_words_dataset(single, test_size=0.34)
+            test_classes = [r["class_name"] for r in ds_single["test_records"]]
+            train_classes = [r["class_name"] for r in ds_single["train_records"]]
+            self.assertNotIn("kangaroo", test_classes)
+            self.assertIn("kangaroo", train_classes)
+
+    def test_saved_record_paths_are_portable(self) -> None:
+        """Records use forward slashes, and Windows-style paths still resolve."""
+        with tempfile.TemporaryDirectory() as tmp:
+            ds_dir = self._populate_synthetic_dataset(
+                Path(tmp) / "ds", images_per_class=4
+            )
+            ds = load_visual_words_dataset(ds_dir)
+            rec_path = ds["train_records"][0]["path"]
+            self.assertNotIn("\\", rec_path)
+            self.assertTrue(resolve_record_path(rec_path).is_file())
+
+        windows_style = "datasets\\Caltech_101_subset\\butterfly\\image_0001.jpg"
+        resolved = resolve_record_path(windows_style)
+        self.assertEqual(
+            resolved.parts[-4:],
+            ("datasets", "Caltech_101_subset", "butterfly", "image_0001.jpg"),
+        )
+
+    def test_histogram_rows_and_normalisation_mismatch_rebuild(self) -> None:
+        """Row-wise normalisation keeps empty rows at zero; stale norms rebuild."""
+        rows = normalize_histograms(np.array([[1, 3], [0, 0]]), "l1")
+        np.testing.assert_allclose(rows, [[0.25, 0.75], [0.0, 0.0]])
+        np.testing.assert_allclose(normalize_histogram([3, 4], "l2"), [0.6, 0.8])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ds_dir = self._populate_synthetic_dataset(
+                Path(tmp) / "ds", images_per_class=3
+            )
+            cb_dir = Path(tmp) / "cb"
+            ds = load_visual_words_dataset(ds_dir, test_size=0.33, random_state=0)
+            bundle = build_codebook(
+                ds["train_records"],
+                class_names=ds["class_names"],
+                descriptor_config=default_descriptor_config(
+                    method="SIFT", max_keypoints=40, n_octaves=3
+                ),
+                clusters_per_class=4,
+                test_records=ds["test_records"],
+            )
+            save_codebook(bundle, output_dir=cb_dir)
+            loaded_cb = load_codebook(cb_dir)
+            build_and_save_histogram_datasets(loaded_cb, normalization="l1")
+
+            with self.assertRaisesRegex(ValueError, "normalisation"):
+                load_histogram_dataset(cb_dir, expected_normalization="l2")
+            rebuilt = load_or_build_histograms(loaded_cb, "l2")
+            self.assertEqual(rebuilt["metadata"]["normalization"], "l2")
+            norms = np.linalg.norm(rebuilt["X_train"], axis=1)
+            np.testing.assert_allclose(norms[norms > 0], 1.0, rtol=1e-5)
+
+            # A codebook file that no longer matches its metadata is rejected.
+            np.save(cb_dir / "codebook.npy", loaded_cb["codebook"] + 1.0)
+            with self.assertRaisesRegex(ValueError, "does not match its metadata"):
+                load_codebook(cb_dir)
 
     def test_end_to_end_visual_vocabulary_tools_pipeline(self) -> None:
         """Verify end-to-end execution of CodebookConstructionTool,

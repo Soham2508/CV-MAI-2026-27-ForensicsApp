@@ -21,6 +21,7 @@ import numpy as np
 from PIL import Image
 
 from forensics_app.core import ImageDocument
+from forensics_app.paths import resolve_path
 
 from .base import ForensicsTool, ToolResult
 from .eigenface_trainer import (
@@ -40,16 +41,21 @@ def preprocess_test_face(
     value_scale: str = "0_1",
     detect_and_crop: bool = False,
     detector_type: str = "YuNet",
+    status: dict[str, str] | None = None,
 ) -> tuple[np.ndarray, Image.Image]:
     """Convert test image to grayscale, optionally detect/crop, and resize to (h, w).
 
-    Returns ``(flattened_vector, resized_pil_gray_image)``.
+    Returns ``(flattened_vector, resized_pil_gray_image)``. When ``status`` is
+    given, ``status["crop"]`` records what happened to the optional face crop,
+    so a failed detection is reported instead of silently ignored.
     """
     working = image.copy()
+    crop_note = "Not requested"
     if detect_and_crop:
         try:
             det = create_face_detector(detector_type)
             faces = det.detect(working)
+            crop_note = "No face found; used the whole image"
             if faces:
                 x, y, w_box, h_box = faces[0]["bbox"]
                 x0 = max(0, int(x))
@@ -58,8 +64,13 @@ def preprocess_test_face(
                 y1 = min(working.height, int(y + h_box))
                 if x1 > x0 and y1 > y0:
                     working = working.crop((x0, y0, x1, y1))
-        except Exception:
-            pass
+                    crop_note = (
+                        f"Cropped to first face ({x0}, {y0}, {x1 - x0}, {y1 - y0})"
+                    )
+        except Exception as exc:
+            crop_note = f"Face detection failed ({exc}); used the whole image"
+    if status is not None:
+        status["crop"] = crop_note
 
     h, w = int(target_shape[0]), int(target_shape[1])
     gray = working.convert("L").resize((w, h), Image.Resampling.BILINEAR)
@@ -130,7 +141,7 @@ def _load_training_match_image(
         u8 = np.clip((recon_2d - vmin) / (vmax - vmin) * 255.0, 0, 255).astype(np.uint8)
     else:
         u8 = np.zeros((h, w), dtype=np.uint8)
-    return Image.fromarray(u8, mode="L")
+    return Image.fromarray(u8)
 
 
 def recognise_face(
@@ -148,11 +159,13 @@ def recognise_face(
     h, w = pca_model["image_shape"]
     value_scale = pca_model.get("value_scale", "0_1")
 
+    crop_status: dict[str, str] = {}
     x_test, preprocessed_pil = preprocess_test_face(
         image,
         (h, w),
         value_scale=value_scale,
         detect_and_crop=detect_and_crop,
+        status=crop_status,
     )
 
     # Calculate test image's PCA coefficients: w_test = U_K^T (x_test - μ)
@@ -231,6 +244,7 @@ def recognise_face(
         "image_shape": (h, w),
         "n_components": int(pca_model["n_components"]),
         "processing_time_ms": elapsed_ms,
+        "crop_status": crop_status.get("crop", "Not requested"),
     }
     result_data["visualization_image"] = render_recognition_result(result_data)
     return result_data
@@ -453,7 +467,7 @@ def ask_face_recognition_parameters(
     def apply() -> None:
         nonlocal result
         pca_dir = pca_dir_var.get().strip()
-        if not pca_dir or not Path(pca_dir).exists():
+        if not pca_dir or not resolve_path(pca_dir).exists():
             messagebox.showerror(
                 "Missing PCA Model",
                 "Please select a valid trained Eigenface / PCA model directory.",
@@ -463,7 +477,7 @@ def ask_face_recognition_parameters(
 
         use_cur = bool(use_current_img_var.get()) and document.is_loaded
         tpath = test_img_path_var.get().strip()
-        if not use_cur and (not tpath or not Path(tpath).exists()):
+        if not use_cur and (not tpath or not resolve_path(tpath).exists()):
             messagebox.showerror(
                 "Missing Test Image",
                 "Please open an image or select a test face image file.",
@@ -523,7 +537,7 @@ class FaceRecognitionTool(ForensicsTool):
 
         knn_bundle: dict[str, Any] | None = None
         knn_path = parameters.get("knn_model_path")
-        if knn_path and Path(knn_path).exists():
+        if knn_path and resolve_path(knn_path).exists():
             knn_bundle = load_knn_classifier(
                 knn_path, expected_pca_model_id=pca_model["model_id"]
             )
@@ -541,7 +555,7 @@ class FaceRecognitionTool(ForensicsTool):
             test_img = document.current
             test_path = document.path
         else:
-            test_path = parameters["test_image_path"]
+            test_path = resolve_path(parameters["test_image_path"])
             with Image.open(test_path) as img:
                 test_img = img.copy()
 
@@ -567,6 +581,7 @@ class FaceRecognitionTool(ForensicsTool):
                 f"{prob:.2f} ({prob * 100:.1f}%)" if prob is not None else "1-NN"
             ),
             "PCA components": rec_out["n_components"],
+            "Face crop": rec_out["crop_status"],
             "Processing time": f"{rec_out['processing_time_ms']:.1f} ms",
         }
         for match in matches:

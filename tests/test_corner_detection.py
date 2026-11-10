@@ -17,7 +17,7 @@ class CornerDetectionTests(unittest.TestCase):
         arr[16, 16] = 255
         arr[16, 48] = 255
         arr[32:48, 32:48] = 255
-        return Image.fromarray(arr, mode="L")
+        return Image.fromarray(arr)
 
     def test_detect_corners_fast_returns_corners_and_rgb_image(self) -> None:
         image = self._create_test_image()

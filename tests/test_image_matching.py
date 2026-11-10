@@ -27,7 +27,7 @@ class ImageMatchingTests(unittest.TestCase):
         for i in range(10, size[0] - 10, 15):
             for j in range(10, size[1] - 10, 15):
                 arr[i : i + 8, j : j + 8] = color
-        return Image.fromarray(arr, mode="RGB")
+        return Image.fromarray(arr)
 
     def test_tool_registered_in_tool_registry(self) -> None:
         registry = build_tool_registry()

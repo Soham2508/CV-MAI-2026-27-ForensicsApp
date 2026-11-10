@@ -7,6 +7,7 @@ from tkinter import filedialog, ttk
 
 import numpy as np
 from PIL import Image, ImageDraw
+from skimage.feature import hog
 
 from forensics_app.core import ImageDocument
 from forensics_app.utils.parameter_dialog import ParameterField, ask_parameters
@@ -21,6 +22,8 @@ IMAGE_TYPES = [
 BOX_COLORS = ("Red", "Green", "Blue", "Yellow", "Cyan", "Magenta", "White")
 EUCLIDEAN_BOX_COLOR = "Red"
 COSINE_BOX_COLOR = "Blue"
+# Fast path: how many best windows per score are re-scored exactly.
+SHORTLIST_SIZE = 48
 
 
 def _window_starts(length: int, window: int, step: int) -> list[int]:
@@ -31,6 +34,83 @@ def _window_starts(length: int, window: int, step: int) -> list[int]:
     return starts
 
 
+def _similarity_scores(
+    template_features: np.ndarray, patch_features: np.ndarray
+) -> tuple[float, float]:
+    """Return (Euclidean distance, cosine similarity) between two HOG vectors."""
+    distance = float(np.linalg.norm(template_features - patch_features))
+    denominator = np.linalg.norm(template_features) * np.linalg.norm(patch_features)
+    similarity = (
+        float(np.dot(template_features, patch_features) / denominator)
+        if denominator > 0
+        else -1.0
+    )
+    return distance, similarity
+
+
+def _shortlist_with_scene_hog(
+    scene_gray: np.ndarray,
+    template_features: np.ndarray,
+    locations: list[tuple[int, int]],
+    window_size: tuple[int, int],
+    orientations: int,
+    pixels_per_cell: int,
+    cells_per_block: int,
+    shortlist_size: int,
+) -> np.ndarray:
+    """Return indices of the windows most likely to score best.
+
+    HOG is computed once for the whole scene and each window's descriptor is
+    read from the block grid. This is close to, but not bit-identical with,
+    computing HOG on the cropped window (scikit-image zeroes the gradient on
+    an image's border rows and columns), so it is only used to shortlist
+    windows; the shortlist is then scored exactly. A window that is not on the
+    cell grid gets its best score over the surrounding cell-aligned offsets.
+    """
+    window_height, window_width = window_size
+    blocks_down = window_height // pixels_per_cell - cells_per_block + 1
+    blocks_across = window_width // pixels_per_cell - cells_per_block + 1
+    blocks = hog(
+        scene_gray,
+        orientations=orientations,
+        pixels_per_cell=(pixels_per_cell, pixels_per_cell),
+        cells_per_block=(cells_per_block, cells_per_block),
+        visualize=False,
+        feature_vector=False,
+    )
+    max_row = blocks.shape[0] - blocks_down
+    max_col = blocks.shape[1] - blocks_across
+    template_norm = float(np.linalg.norm(template_features))
+
+    approx_distance = np.full(len(locations), np.inf)
+    approx_similarity = np.full(len(locations), -np.inf)
+    for i, (left, top) in enumerate(locations):
+        rows = {
+            min(max(top // pixels_per_cell, 0), max_row),
+            min(max(-(-top // pixels_per_cell), 0), max_row),
+        }
+        cols = {
+            min(max(left // pixels_per_cell, 0), max_col),
+            min(max(-(-left // pixels_per_cell), 0), max_col),
+        }
+        for cell_row in rows:
+            for cell_col in cols:
+                vector = blocks[
+                    cell_row : cell_row + blocks_down,
+                    cell_col : cell_col + blocks_across,
+                ].ravel()
+                distance = float(np.linalg.norm(vector - template_features))
+                approx_distance[i] = min(approx_distance[i], distance)
+                norm = float(np.linalg.norm(vector)) * template_norm
+                approx_similarity[i] = max(
+                    approx_similarity[i],
+                    float(vector @ template_features) / norm if norm > 0 else -1.0,
+                )
+    by_distance = np.argsort(approx_distance, kind="stable")[:shortlist_size]
+    by_similarity = np.argsort(-approx_similarity, kind="stable")[:shortlist_size]
+    return np.union1d(by_distance, by_similarity)
+
+
 def detect_with_hog(
     scene: Image.Image,
     template: Image.Image,
@@ -39,7 +119,14 @@ def detect_with_hog(
     cells_per_block: int,
     step_size: int,
 ) -> dict[str, object]:
-    """Return the best sliding-window locations using two HOG similarity scores."""
+    """Return the best sliding-window locations using two HOG similarity scores.
+
+    When the step is a multiple of the cell size (the default: step 8 with
+    8-pixel cells), windows are first shortlisted from one scene-wide HOG and
+    only the shortlist is scored exactly. The winning windows and their
+    reported scores are the exact per-window HOG results. Any other step, or a
+    scene with few windows, scores every window exactly.
+    """
     scene_gray = np.asarray(scene.convert("L"), dtype=np.float32) / 255.0
     template_gray = np.asarray(template.convert("L"), dtype=np.float32) / 255.0
 
@@ -56,41 +143,53 @@ def detect_with_hog(
         cells_per_block,
     )
 
-    locations: list[tuple[int, int]] = []
-    distances: list[float] = []
-    similarities: list[float] = []
+    locations = [
+        (left, top)
+        for top in _window_starts(scene_height, window_height, step_size)
+        for left in _window_starts(scene_width, window_width, step_size)
+    ]
 
-    for top in _window_starts(scene_height, window_height, step_size):
-        for left in _window_starts(scene_width, window_width, step_size):
-            patch = scene_gray[top : top + window_height, left : left + window_width]
-            patch_features = compute_hog_features(
-                patch,
-                orientations,
-                pixels_per_cell,
-                cells_per_block,
-            )
+    def exact_scores(index: int) -> tuple[float, float]:
+        left, top = locations[index]
+        patch = scene_gray[top : top + window_height, left : left + window_width]
+        patch_features = compute_hog_features(
+            patch,
+            orientations,
+            pixels_per_cell,
+            cells_per_block,
+        )
+        return _similarity_scores(template_features, patch_features)
 
-            locations.append((left, top))
-            distances.append(float(np.linalg.norm(template_features - patch_features)))
+    use_shortlist = (
+        step_size % pixels_per_cell == 0
+        and len(locations) > 2 * SHORTLIST_SIZE
+    )
+    if use_shortlist:
+        candidates = _shortlist_with_scene_hog(
+            scene_gray,
+            template_features,
+            locations,
+            (window_height, window_width),
+            orientations,
+            pixels_per_cell,
+            cells_per_block,
+            SHORTLIST_SIZE,
+        )
+    else:
+        candidates = np.arange(len(locations))
 
-            denominator = np.linalg.norm(template_features) * np.linalg.norm(
-                patch_features
-            )
-            similarities.append(
-                float(np.dot(template_features, patch_features) / denominator)
-                if denominator > 0
-                else -1.0
-            )
-
-    euclidean_index = int(np.argmin(distances))
-    cosine_index = int(np.argmax(similarities))
+    # Candidates are scored in the original window order, so ties resolve to
+    # the first window exactly as argmin/argmax over all windows would.
+    scores = {int(i): exact_scores(int(i)) for i in sorted(candidates)}
+    euclidean_index = min(scores, key=lambda i: (scores[i][0], i))
+    cosine_index = min(scores, key=lambda i: (-scores[i][1], i))
 
     return {
         "template_size": (window_width, window_height),
         "euclidean_location": locations[euclidean_index],
-        "euclidean_distance": distances[euclidean_index],
+        "euclidean_distance": scores[euclidean_index][0],
         "cosine_location": locations[cosine_index],
-        "cosine_similarity": similarities[cosine_index],
+        "cosine_similarity": scores[cosine_index][1],
         "windows_checked": len(locations),
     }
 
