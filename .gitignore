@@ -15,3 +15,7 @@ datasets/
 # Face crops written by the Eigenface trainer
 models/eigenface_model/train_images/
 models/eigenface_model/test_images/
+
+# CNN: InceptionV3 weights exceed GitHub file limit.
+# Regenerate with notebooks/train_cnn.ipynb (Step 6)
+models/cnn/cifar10_inceptionv3/model.keras
