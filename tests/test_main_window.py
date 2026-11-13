@@ -15,6 +15,7 @@ class MainWindowTests(unittest.TestCase):
         self.window.sidebar_canvas.winfo_height.return_value = 300
         self.window.sidebar = MagicMock()
 
+    @patch("forensics_app.ui.main_window.sys.platform", "win32")
     def test_mousewheel_scrolls_sidebar_when_pointer_is_over_canvas(self) -> None:
         event = SimpleNamespace(x_root=100, y_root=100, num=None, delta=120)
 

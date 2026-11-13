@@ -4,6 +4,7 @@ from .best_image_match_in_dir import BestImageMatchInDirTool
 from .canny import CannyTool
 from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
+from .cnn_classification import CnnClassificationTool
 from .codebook_construction import CodebookConstructionTool
 from .contrast_stretch import CLAHETool, ContrastStretchTool, HistogramEqualizationTool
 from .convolution import ConvolutionTool
@@ -13,6 +14,7 @@ from .edge_overlay import EdgeOverlayTool
 from .eigenface_trainer import EigenfaceTrainerTool
 from .face_detection import FaceDetectionTool
 from .face_recognition import FaceRecognitionTool
+from .feature_projection import FeatureProjectionTool
 from .grayscale import GrayscaleTool
 from .histogram import HistogramTool
 from .histogram_construction import HistogramConstructionTool
@@ -62,6 +64,8 @@ def build_tool_registry() -> ToolRegistry:
             CodebookConstructionTool(),
             HistogramConstructionTool(),
             ImageClassificationTool(),
+            CnnClassificationTool(),
+            FeatureProjectionTool(),
         ]
     )
 
@@ -79,4 +83,6 @@ __all__ = [
     "CodebookConstructionTool",
     "HistogramConstructionTool",
     "ImageClassificationTool",
+    "CnnClassificationTool",
+    "FeatureProjectionTool",
 ]
