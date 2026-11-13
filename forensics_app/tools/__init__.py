@@ -4,6 +4,7 @@ from .best_image_match_in_dir import BestImageMatchInDirTool
 from .canny import CannyTool
 from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
+from .cnn_classification import CnnClassificationTool
 from .codebook_construction import CodebookConstructionTool
 from .contrast_stretch import CLAHETool, ContrastStretchTool, HistogramEqualizationTool
 from .convolution import ConvolutionTool
@@ -62,6 +63,7 @@ def build_tool_registry() -> ToolRegistry:
             CodebookConstructionTool(),
             HistogramConstructionTool(),
             ImageClassificationTool(),
+            CnnClassificationTool(),
         ]
     )
 
@@ -79,4 +81,5 @@ __all__ = [
     "CodebookConstructionTool",
     "HistogramConstructionTool",
     "ImageClassificationTool",
+    "CnnClassificationTool",
 ]
