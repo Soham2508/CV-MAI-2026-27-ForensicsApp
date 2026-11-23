@@ -137,6 +137,17 @@ class YoloDetectionTests(unittest.TestCase):
             os.utime(path, ns=(stat.st_atime_ns, stat.st_mtime_ns + 10**9))
             self.assertIsNot(yd.load_yolo_model(path), first)
         self.assertEqual(len(loads), 2)
+        self.assertEqual(len(yd._MODEL_CACHE), 1)
+
+    def test_cache_keeps_several_models_and_evicts_the_oldest(self) -> None:
+        paths = [self.root / f"m{i}.pt" for i in range(yd.MODEL_CACHE_SIZE + 1)]
+        for path in paths:
+            path.write_bytes(b"x")
+        with patch.object(yd, "_import_yolo", return_value=lambda p: FakeYolo()):
+            models = [yd.load_yolo_model(path) for path in paths]
+            self.assertFalse(yd.is_model_cached(paths[0]))
+            for path, model in zip(paths[1:], models[1:]):
+                self.assertIs(yd.load_yolo_model(path), model)
 
     # -- class names and filter --------------------------------------------
 

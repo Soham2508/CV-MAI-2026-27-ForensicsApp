@@ -1,6 +1,7 @@
 """Register course functionality here so it appears in the sidebar."""
 
 from .best_image_match_in_dir import BestImageMatchInDirTool
+from .blood_cell_detection import BloodCellDetectionTool
 from .canny import CannyTool
 from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
@@ -64,6 +65,7 @@ def build_tool_registry() -> ToolRegistry:
             HistogramConstructionTool(),
             ImageClassificationTool(),
             YoloDetectionTool(),
+            BloodCellDetectionTool(),
         ]
     )
 
@@ -82,4 +84,5 @@ __all__ = [
     "HistogramConstructionTool",
     "ImageClassificationTool",
     "YoloDetectionTool",
+    "BloodCellDetectionTool",
 ]

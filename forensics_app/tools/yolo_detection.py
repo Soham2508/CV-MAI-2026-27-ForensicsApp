@@ -124,8 +124,9 @@ def _import_yolo() -> Any:
     return YOLO
 
 
-# Loaded model, keyed by (path, modification time).
+# Recently loaded models, keyed by (path, modification time); oldest evicted first.
 _MODEL_CACHE: dict[tuple[str, int], Any] = {}
+MODEL_CACHE_SIZE = 3
 
 
 def _cache_key(path: Path) -> tuple[str, int]:
@@ -152,9 +153,13 @@ def load_yolo_model(path: str | Path) -> Any:
     yolo = _import_yolo()
     path.parent.mkdir(parents=True, exist_ok=True)
     model = yolo(str(path))
-    _MODEL_CACHE.clear()
     if path.is_file():
-        _MODEL_CACHE[_cache_key(path)] = model
+        key = _cache_key(path)
+        for stale in [k for k in _MODEL_CACHE if k[0] == key[0]]:
+            del _MODEL_CACHE[stale]
+        while len(_MODEL_CACHE) >= MODEL_CACHE_SIZE:
+            del _MODEL_CACHE[next(iter(_MODEL_CACHE))]
+        _MODEL_CACHE[key] = model
     return model
 
 
