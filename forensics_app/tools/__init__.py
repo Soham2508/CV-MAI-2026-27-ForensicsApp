@@ -28,6 +28,7 @@ from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
 from .viola_jones_trainer import ViolaJonesTrainerTool
 from .webcam_detection import WebcamFaceDetectionTool
+from .yolo_detection import YoloDetectionTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -62,6 +63,7 @@ def build_tool_registry() -> ToolRegistry:
             CodebookConstructionTool(),
             HistogramConstructionTool(),
             ImageClassificationTool(),
+            YoloDetectionTool(),
         ]
     )
 
@@ -79,4 +81,5 @@ __all__ = [
     "CodebookConstructionTool",
     "HistogramConstructionTool",
     "ImageClassificationTool",
+    "YoloDetectionTool",
 ]
