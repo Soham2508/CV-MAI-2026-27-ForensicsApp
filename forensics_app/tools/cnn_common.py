@@ -516,6 +516,8 @@ def preprocess_pil_image(
 class ImageRecordDataset(Dataset):
     """PyTorch Dataset backed by disk records and a passport preprocessing spec."""
 
+    _MAX_CACHE_BYTES = 512 * 1024 * 1024
+
     def __init__(
         self,
         records: list[dict[str, Any]],
@@ -523,20 +525,30 @@ class ImageRecordDataset(Dataset):
     ) -> None:
         self.records = list(records)
         self.preprocessing = dict(preprocessing)
+        h, w = [int(v) for v in self.preprocessing["input_size"]]
+        est_bytes = len(self.records) * 3 * h * w * 4
+        self._use_cache = est_bytes <= self._MAX_CACHE_BYTES
+        self._cache: dict[int, torch.Tensor] = {}
 
     def __len__(self) -> int:
         return len(self.records)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
         rec = self.records[index]
-        img_path = resolve_record_path(rec["path"])
-        with Image.open(img_path) as im:
-            tensor = preprocess_pil_image(im, self.preprocessing)
+        tensor = self._cache.get(index)
+        if tensor is None:
+            img_path = resolve_record_path(rec["path"])
+            with Image.open(img_path) as im:
+                tensor = preprocess_pil_image(im, self.preprocessing)
+            if self._use_cache:
+                self._cache[index] = tensor
         return tensor, int(rec["class_id"])
 
 
 class CIFAR10IndexedDataset(Dataset):
     """PyTorch Dataset backed by torchvision CIFAR-10 arrays and selected indices."""
+
+    _MAX_PRELOAD_BYTES = 768 * 1024 * 1024
 
     def __init__(
         self,
@@ -549,11 +561,47 @@ class CIFAR10IndexedDataset(Dataset):
         self.targets = targets
         self.indices = [int(i) for i in indices]
         self.preprocessing = dict(preprocessing)
+        self._labels = torch.tensor(
+            [int(targets[i]) for i in self.indices], dtype=torch.long
+        )
+        self._tensors: torch.Tensor | None = self._maybe_preload_tensors()
+
+    def _maybe_preload_tensors(self) -> torch.Tensor | None:
+        if not self.indices:
+            return None
+        h, w = [int(v) for v in self.preprocessing["input_size"]]
+        est_bytes = len(self.indices) * 3 * h * w * 4
+        if est_bytes > self._MAX_PRELOAD_BYTES:
+            return None
+
+        sub = np.ascontiguousarray(self.data[self.indices], dtype=np.uint8)
+        tensors = (
+            torch.from_numpy(sub)
+            .permute(0, 3, 1, 2)
+            .contiguous()
+            .to(dtype=torch.float32)
+            .div_(255.0)
+        )
+        if tensors.shape[2] != h or tensors.shape[3] != w:
+            tensors = torch.nn.functional.interpolate(
+                tensors, size=(h, w), mode="bilinear", align_corners=False
+            )
+        if self.preprocessing.get("normalization") == "imagenet":
+            mean = torch.tensor(
+                self.preprocessing.get("mean", IMAGENET_MEAN), dtype=torch.float32
+            ).view(1, 3, 1, 1)
+            std = torch.tensor(
+                self.preprocessing.get("std", IMAGENET_STD), dtype=torch.float32
+            ).view(1, 3, 1, 1)
+            tensors.sub_(mean).div_(std)
+        return tensors
 
     def __len__(self) -> int:
         return len(self.indices)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+        if self._tensors is not None:
+            return self._tensors[index], int(self._labels[index])
         src_idx = self.indices[index]
         arr = self.data[src_idx]
         img = Image.fromarray(arr, mode="RGB")

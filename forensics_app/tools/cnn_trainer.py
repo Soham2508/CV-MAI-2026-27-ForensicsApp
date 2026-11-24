@@ -76,6 +76,8 @@ def _evaluate_loader(
     loader: DataLoader | None,
     criterion: nn.Module,
     device: torch.device,
+    *,
+    use_amp: bool = False,
 ) -> tuple[float | None, float | None, np.ndarray, np.ndarray]:
     """Run forward evaluation without gradients; return (loss, acc, y_true, y_pred)."""
     if loader is None or len(loader.dataset) == 0:
@@ -87,24 +89,25 @@ def _evaluate_loader(
         )
 
     model.eval()
-    total_loss = 0.0
+    total_loss = torch.zeros((), device=device, dtype=torch.float64)
     total_count = 0
-    y_true_all: list[np.ndarray] = []
-    y_pred_all: list[np.ndarray] = []
+    y_true_all: list[torch.Tensor] = []
+    y_pred_all: list[torch.Tensor] = []
     non_blocking = device.type == "cuda"
+    amp_enabled = use_amp and device.type == "cuda"
 
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=amp_enabled):
         for inputs, targets in loader:
             inputs = inputs.to(device, non_blocking=non_blocking)
             targets = targets.to(device, dtype=torch.long, non_blocking=non_blocking)
             logits = model(inputs)
             loss = criterion(logits, targets)
             bs = int(targets.size(0))
-            total_loss += float(loss.item()) * bs
+            total_loss += loss.detach().to(dtype=torch.float64) * bs
             total_count += bs
             preds = torch.argmax(logits, dim=1)
-            y_true_all.append(targets.cpu().numpy())
-            y_pred_all.append(preds.cpu().numpy())
+            y_true_all.append(targets.detach())
+            y_pred_all.append(preds.detach())
 
     if total_count == 0:
         return (
@@ -113,10 +116,10 @@ def _evaluate_loader(
             np.empty((0,), dtype=np.int64),
             np.empty((0,), dtype=np.int64),
         )
-    y_true = np.concatenate(y_true_all)
-    y_pred = np.concatenate(y_pred_all)
+    y_true = torch.cat(y_true_all).cpu().numpy()
+    y_pred = torch.cat(y_pred_all).cpu().numpy()
     acc = float(accuracy_score(y_true, y_pred))
-    return total_loss / total_count, acc, y_true, y_pred
+    return float(total_loss.item()) / total_count, acc, y_true, y_pred
 
 
 def _run_epochs(
@@ -129,33 +132,45 @@ def _run_epochs(
     epochs: int,
     phase_name: str,
     history: dict[str, list[Any]],
+    *,
+    use_amp: bool = False,
+    scaler: torch.amp.GradScaler | None = None,
 ) -> None:
     """Execute ``epochs`` training passes and append metrics to ``history``."""
     non_blocking = device.type == "cuda"
+    amp_enabled = use_amp and device.type == "cuda"
     for _ in range(int(epochs)):
         model.train()
-        running_loss = 0.0
-        correct = 0
+        running_loss = torch.zeros((), device=device, dtype=torch.float64)
+        correct = torch.zeros((), device=device, dtype=torch.long)
         total = 0
 
         for inputs, targets in train_loader:
             inputs = inputs.to(device, non_blocking=non_blocking)
             targets = targets.to(device, dtype=torch.long, non_blocking=non_blocking)
             optimizer.zero_grad(set_to_none=True)
-            logits = model(inputs)
-            loss = criterion(logits, targets)
-            loss.backward()
-            optimizer.step()
+            with torch.amp.autocast("cuda", enabled=amp_enabled):
+                logits = model(inputs)
+                loss = criterion(logits, targets)
+            if scaler is not None and amp_enabled:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
 
             bs = int(targets.size(0))
-            running_loss += float(loss.item()) * bs
+            running_loss += loss.detach().to(dtype=torch.float64) * bs
             preds = torch.argmax(logits, dim=1)
-            correct += int((preds == targets).sum().item())
+            correct += (preds == targets).sum()
             total += bs
 
-        tr_loss = running_loss / max(1, total)
-        tr_acc = correct / max(1, total)
-        va_loss, va_acc, _, _ = _evaluate_loader(model, val_loader, criterion, device)
+        tr_loss = float(running_loss.item()) / max(1, total)
+        tr_acc = float(correct.item()) / max(1, total)
+        va_loss, va_acc, _, _ = _evaluate_loader(
+            model, val_loader, criterion, device, use_amp=amp_enabled
+        )
 
         history["epoch"].append(len(history["epoch"]) + 1)
         history["phase"].append(phase_name)
@@ -323,6 +338,10 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
         torch.cuda.manual_seed_all(seed)
 
     device, device_info = get_compute_device(device_pref)
+    use_amp = device.type == "cuda"
+    if use_amp:
+        torch.backends.cudnn.benchmark = True
+    scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     preprocessing = build_preprocessing_spec(
         input_size=input_size, normalization=normalization
     )
@@ -401,6 +420,8 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
         epochs,
         "train",
         history,
+        use_amp=use_amp,
+        scaler=scaler,
     )
 
     if spec.is_transfer_learning and fine_tune_epochs > 0:
@@ -420,14 +441,20 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
             fine_tune_epochs,
             "fine_tune",
             history,
+            use_amp=use_amp,
+            scaler=scaler,
         )
 
     elapsed = time.perf_counter() - t0
 
-    _, train_eval_acc, _, _ = _evaluate_loader(model, train_loader, criterion, device)
-    _, val_eval_acc, _, _ = _evaluate_loader(model, val_loader, criterion, device)
+    _, train_eval_acc, _, _ = _evaluate_loader(
+        model, train_loader, criterion, device, use_amp=use_amp
+    )
+    _, val_eval_acc, _, _ = _evaluate_loader(
+        model, val_loader, criterion, device, use_amp=use_amp
+    )
     test_loss, test_acc, y_true, y_pred = _evaluate_loader(
-        model, test_loader, criterion, device
+        model, test_loader, criterion, device, use_amp=use_amp
     )
 
     cm = (
@@ -555,7 +582,7 @@ def ask_cnn_training_parameters(parent: tk.Misc) -> dict[str, Any] | None:
 
     epochs_var = tk.IntVar(value=15)
     ft_epochs_var = tk.IntVar(value=0)
-    batch_size_var = tk.IntVar(value=32)
+    batch_size_var = tk.IntVar(value=128)
     optimizer_var = tk.StringVar(value="SGD")
     lr_var = tk.DoubleVar(value=0.01)
     ft_lr_var = tk.DoubleVar(value=0.0001)
@@ -762,7 +789,7 @@ def ask_cnn_training_parameters(parent: tk.Misc) -> dict[str, Any] | None:
 
     ttk.Label(hp_frame, text="Batch size:").grid(row=0, column=2, sticky="w", pady=2)
     ttk.Spinbox(
-        hp_frame, textvariable=batch_size_var, from_=4, to=256, increment=8, width=7
+        hp_frame, textvariable=batch_size_var, from_=4, to=512, increment=16, width=7
     ).grid(row=0, column=3, sticky="w", padx=6, pady=2)
 
     ttk.Label(hp_frame, text="Optimizer:").grid(row=1, column=0, sticky="w", pady=2)
