@@ -140,6 +140,7 @@ def _run_epochs(
     non_blocking = device.type == "cuda"
     amp_enabled = use_amp and device.type == "cuda"
     for _ in range(int(epochs)):
+        ep_t0 = time.perf_counter()
         model.train()
         running_loss = torch.zeros((), device=device, dtype=torch.float64)
         correct = torch.zeros((), device=device, dtype=torch.long)
@@ -171,8 +172,13 @@ def _run_epochs(
         va_loss, va_acc, _, _ = _evaluate_loader(
             model, val_loader, criterion, device, use_amp=amp_enabled
         )
+        ep_dt = time.perf_counter() - ep_t0
 
-        history["epoch"].append(len(history["epoch"]) + 1)
+        prev_tr_acc = history["train_acc"][-1] if history["train_acc"] else None
+        prev_va_acc = history["val_acc"][-1] if history["val_acc"] else None
+        ep_num = len(history["epoch"]) + 1
+
+        history["epoch"].append(ep_num)
         history["phase"].append(phase_name)
         history["train_loss"].append(round(float(tr_loss), 6))
         history["train_acc"].append(round(float(tr_acc), 6))
@@ -181,6 +187,26 @@ def _run_epochs(
         )
         history["val_acc"].append(
             round(float(va_acc), 6) if va_acc is not None else None
+        )
+
+        tr_gain = (
+            f" ({(tr_acc - prev_tr_acc) * 100:+.2f}%)"
+            if prev_tr_acc is not None
+            else ""
+        )
+        val_str = ""
+        if va_loss is not None and va_acc is not None:
+            va_gain = (
+                f" ({(va_acc - prev_va_acc) * 100:+.2f}%)"
+                if prev_va_acc is not None
+                else ""
+            )
+            val_str = f" | val_loss={va_loss:.4f} val_acc={va_acc * 100:.2f}%{va_gain}"
+        print(
+            f"  [Epoch {ep_num:02d} | {phase_name}] "
+            f"train_loss={tr_loss:.4f} train_acc={tr_acc * 100:.2f}%{tr_gain}"
+            f"{val_str} | {ep_dt:.2f}s",
+            flush=True,
         )
 
 
@@ -408,6 +434,30 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
         for p in model.parameters():
             p.requires_grad = True
         trainable_params_list = list(model.parameters())
+
+    n_total_params = sum(p.numel() for p in model.parameters())
+    n_trainable_params = sum(p.numel() for p in trainable_params_list)
+    dev_label = device_info["gpu_name"] or device_info["device"]
+    print(
+        "[CNNTrainer] Training parameters:\n"
+        f"  arch={spec.display_name} ({arch_key}) | input={input_size}x{input_size} | "
+        f"norm={normalization} | params={n_trainable_params:,}/{n_total_params:,} trainable\n"
+        f"  device={device_info['device']} ({dev_label}) | amp={use_amp} | "
+        f"cudnn_benchmark={bool(use_amp and torch.backends.cudnn.benchmark)}\n"
+        f"  dataset={ds_bundle['dataset_name']} (train={len(train_ds)}, "
+        f"val={len(val_ds) if val_ds is not None else 0}, test={len(test_ds)}, "
+        f"classes={num_classes})\n"
+        f"  epochs={epochs}"
+        + (
+            f" + fine_tune={fine_tune_epochs} (ft_lr={fine_tune_lr})"
+            if spec.is_transfer_learning and fine_tune_epochs > 0
+            else ""
+        )
+        + f" | batch_size={eff_batch} | optimizer={optimizer_name} | lr={learning_rate} | "
+        f"seed={seed}\n"
+        f"  output_dir={model_dir}",
+        flush=True,
+    )
 
     optimizer = _make_optimizer(optimizer_name, trainable_params_list, learning_rate)
     _run_epochs(
