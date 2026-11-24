@@ -5,6 +5,9 @@ from .blood_cell_detection import BloodCellDetectionTool
 from .canny import CannyTool
 from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
+from .cnn_classifier import CNNClassificationTool
+from .cnn_feature_projection import CNNFeatureProjectionTool
+from .cnn_trainer import CNNTrainerTool
 from .codebook_construction import CodebookConstructionTool
 from .contrast_stretch import CLAHETool, ContrastStretchTool, HistogramEqualizationTool
 from .convolution import ConvolutionTool
@@ -64,8 +67,14 @@ def build_tool_registry() -> ToolRegistry:
             CodebookConstructionTool(),
             HistogramConstructionTool(),
             ImageClassificationTool(),
+<<<<<<< HEAD
             YoloDetectionTool(),
             BloodCellDetectionTool(),
+=======
+            CNNTrainerTool(),
+            CNNClassificationTool(),
+            CNNFeatureProjectionTool(),
+>>>>>>> 99422eb02d1785db9534ffa85ca8cd7927324b01
         ]
     )
 
@@ -83,6 +92,12 @@ __all__ = [
     "CodebookConstructionTool",
     "HistogramConstructionTool",
     "ImageClassificationTool",
+<<<<<<< HEAD
     "YoloDetectionTool",
     "BloodCellDetectionTool",
+=======
+    "CNNTrainerTool",
+    "CNNClassificationTool",
+    "CNNFeatureProjectionTool",
+>>>>>>> 99422eb02d1785db9534ffa85ca8cd7927324b01
 ]
