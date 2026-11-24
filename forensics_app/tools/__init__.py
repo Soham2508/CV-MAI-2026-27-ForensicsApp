@@ -1,6 +1,7 @@
 """Register course functionality here so it appears in the sidebar."""
 
 from .best_image_match_in_dir import BestImageMatchInDirTool
+from .blood_cell_detection import BloodCellDetectionTool
 from .canny import CannyTool
 from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
@@ -31,6 +32,7 @@ from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
 from .viola_jones_trainer import ViolaJonesTrainerTool
 from .webcam_detection import WebcamFaceDetectionTool
+from .yolo_detection import YoloDetectionTool
 
 
 def build_tool_registry() -> ToolRegistry:
@@ -65,9 +67,14 @@ def build_tool_registry() -> ToolRegistry:
             CodebookConstructionTool(),
             HistogramConstructionTool(),
             ImageClassificationTool(),
+<<<<<<< HEAD
+            YoloDetectionTool(),
+            BloodCellDetectionTool(),
+=======
             CNNTrainerTool(),
             CNNClassificationTool(),
             CNNFeatureProjectionTool(),
+>>>>>>> 99422eb02d1785db9534ffa85ca8cd7927324b01
         ]
     )
 
@@ -85,7 +92,12 @@ __all__ = [
     "CodebookConstructionTool",
     "HistogramConstructionTool",
     "ImageClassificationTool",
+<<<<<<< HEAD
+    "YoloDetectionTool",
+    "BloodCellDetectionTool",
+=======
     "CNNTrainerTool",
     "CNNClassificationTool",
     "CNNFeatureProjectionTool",
+>>>>>>> 99422eb02d1785db9534ffa85ca8cd7927324b01
 ]

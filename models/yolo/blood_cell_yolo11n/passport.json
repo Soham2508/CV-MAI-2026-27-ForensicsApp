@@ -1,0 +1,205 @@
+{
+  "model_name": "blood_cell_yolo11n",
+  "display_name": "Blood cells YOLO11n (fine-tuned from COCO)",
+  "description": "YOLO11n detector for platelets (PC), red (RBC) and white (WBC) blood cells, fine-tuned from the COCO-pretrained yolo11n.pt.",
+  "task": "object detection",
+  "architecture": {
+    "type": "Ultralytics YOLO11n",
+    "layers": 182,
+    "parameters": 2605369,
+    "gflops": 6.6,
+    "initial_weights": "yolo11n.pt (COCO-pretrained)",
+    "detect_head": "classification branches keep the COCO width (80 channels); only their last 1x1 conv was replaced for 3 classes"
+  },
+  "dataset": {
+    "name": "Roboflow blood cell detection (blood-cell-st9na, version 1)",
+    "source": "https://universe.roboflow.com/tumor-4iauk/blood-cell-st9na",
+    "license": "CC BY 4.0",
+    "format": "COCO export converted to YOLO with coco_to_yolo (notebook step 2)",
+    "image_size": [
+      640,
+      640
+    ],
+    "splits": {
+      "train": {
+        "images": 3027,
+        "boxes": 55881,
+        "boxes_per_class": {
+          "PC": 1803,
+          "RBC": 50895,
+          "WBC": 3183
+        }
+      },
+      "valid": {
+        "images": 288,
+        "boxes": 5361,
+        "boxes_per_class": {
+          "PC": 159,
+          "RBC": 4895,
+          "WBC": 307
+        }
+      },
+      "test": {
+        "images": 144,
+        "boxes": 2678,
+        "boxes_per_class": {
+          "PC": 91,
+          "RBC": 2439,
+          "WBC": 148
+        }
+      }
+    },
+    "notes": [
+      "Roboflow preprocessing: auto-orient, resize (stretch) to 640x640.",
+      "Train split = 1,009 source images x 3 Roboflow augmentations (flips, 90-degree rotations, blur, salt-and-pepper noise); valid/test un-augmented.",
+      "Exact duplicate boxes: 66 in train, 16 in valid, 0 in test (Ultralytics drops them).",
+      "RBCs cut off at the image border are mostly not labelled."
+    ]
+  },
+  "class_names": [
+    "PC",
+    "RBC",
+    "WBC"
+  ],
+  "class_colors": [
+    "#2a78d6",
+    "#eb6834",
+    "#1baf7a"
+  ],
+  "inference": {
+    "image_size": 640,
+    "confidence": 0.25,
+    "nms_iou": 0.7,
+    "input": "RGB image of the same kind (640x640 smear crops); Ultralytics letterboxes it to the input size."
+  },
+  "training": {
+    "epochs_requested": 50,
+    "epochs_run": 50,
+    "best_epoch": 50,
+    "best_val_mAP50-95": 0.8287,
+    "minutes": 40.44,
+    "device": "mps",
+    "optimizer": "auto -> AdamW, lr = 0.002 * 5 / (4 + nc) = 0.001429",
+    "settings": {
+      "imgsz": "640",
+      "batch": "16",
+      "patience": "15",
+      "seed": "42",
+      "pretrained": "true",
+      "mosaic": "1.0",
+      "close_mosaic": "10",
+      "fliplr": "0.5",
+      "flipud": "0.5",
+      "hsv_h": "0.015",
+      "hsv_s": "0.7",
+      "hsv_v": "0.4",
+      "translate": "0.1",
+      "scale": "0.5",
+      "cache": "ram"
+    }
+  },
+  "evaluation": {
+    "split": "test",
+    "images": 144,
+    "ultralytics": {
+      "precision": 0.9696529362426317,
+      "recall": 0.96212780628733,
+      "mAP50": 0.9876683626355568,
+      "mAP50-95": 0.8552918423959512,
+      "inference_ms": 1.97432523610688,
+      "per_class": {
+        "PC": {
+          "precision": 0.9629733635167681,
+          "recall": 0.9230769230769231,
+          "AP50": 0.9804004059192766,
+          "AP50-95": 0.7916443940395556
+        },
+        "RBC": {
+          "precision": 0.9621795058792189,
+          "recall": 0.9700632525418234,
+          "AP50": 0.9911181955009069,
+          "AP50-95": 0.8972049655980563
+        },
+        "WBC": {
+          "precision": 0.9838059393319082,
+          "recall": 0.9932432432432432,
+          "AP50": 0.9914864864864865,
+          "AP50-95": 0.8770261675502423
+        }
+      }
+    },
+    "manual": {
+      "matching": "COCO-style greedy by confidence, per class",
+      "ap_interpolation": "101-point",
+      "per_class": {
+        "PC": {
+          "AP50": 0.9652,
+          "AP75": 0.9007,
+          "AP50-95": 0.7748
+        },
+        "RBC": {
+          "AP50": 0.9818,
+          "AP75": 0.9492,
+          "AP50-95": 0.8831
+        },
+        "WBC": {
+          "AP50": 0.9863,
+          "AP75": 0.9757,
+          "AP50-95": 0.8713
+        }
+      },
+      "mAP50": 0.9778,
+      "mAP50-95": 0.8431
+    },
+    "operating_point": {
+      "PC": {
+        "precision": 0.875,
+        "recall": 0.9231,
+        "fppi": 0.0833
+      },
+      "RBC": {
+        "precision": 0.8452,
+        "recall": 0.9893,
+        "fppi": 3.0694
+      },
+      "WBC": {
+        "precision": 0.9671,
+        "recall": 0.9932,
+        "fppi": 0.0347
+      }
+    },
+    "false_positive_causes": {
+      "PC": {
+        "overlaps a labelled cell": 0,
+        "touches the border": 8,
+        "wrong class": 0,
+        "no label nearby": 4
+      },
+      "RBC": {
+        "overlaps a labelled cell": 169,
+        "touches the border": 265,
+        "wrong class": 2,
+        "no label nearby": 6
+      },
+      "WBC": {
+        "overlaps a labelled cell": 2,
+        "touches the border": 2,
+        "wrong class": 1,
+        "no label nearby": 0
+      }
+    }
+  },
+  "files": {
+    "weights": "best.pt",
+    "training_curves": "training_curves.png",
+    "results": "results.csv",
+    "train_args": "train_args.yaml",
+    "samples": "../blood_cell_samples"
+  },
+  "environment": {
+    "ultralytics": "8.4.216",
+    "torch": "2.15.0",
+    "python": "3.12.16"
+  },
+  "created_utc": "2026-11-23T20:05:29Z"
+}
