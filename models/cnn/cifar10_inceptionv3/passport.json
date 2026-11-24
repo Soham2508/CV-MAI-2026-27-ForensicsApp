@@ -1,0 +1,349 @@
+{
+  "passport_version": 1,
+  "model_name": "cifar10_inceptionv3",
+  "display_name": "CIFAR-10 InceptionV3 (ImageNet transfer learning)",
+  "task": "image_classification",
+  "description": "ImageNet-pretrained InceptionV3 with a new classification head, trained on a stratified CIFAR-10 subset in two phases (frozen base, then fine-tuning of the top blocks).",
+  "architecture": {
+    "type": "Transfer learning: InceptionV3 base + new head",
+    "input_shape": [
+      128,
+      128,
+      3
+    ],
+    "base": "keras.applications.InceptionV3(weights='imagenet', include_top=False)",
+    "head": "GlobalAveragePooling2D -> Dense 1024 ReLU ('features') -> Dropout 0.3 -> Dense 10 softmax ('predictions')",
+    "fine_tuned_from_layer": "mixed9",
+    "base_batchnorm_mode": "inference (base called with training=False)",
+    "parameters": {
+      "total": 23911210,
+      "trainable": 8181962,
+      "non_trainable": 15729248
+    },
+    "summary": "Model: \"cifar10_inceptionv3\"\n┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓\n┃ Layer (type)                    ┃ Output Shape           ┃       Param # ┃\n┡━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩\n│ image (InputLayer)              │ (None, 128, 128, 3)    │             0 │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ aug_flip (RandomFlip)           │ (None, 128, 128, 3)    │             0 │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ aug_translate                   │ (None, 128, 128, 3)    │             0 │\n│ (RandomTranslation)             │                        │               │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ inception_v3 (Functional)       │ (None, 2, 2, 2048)     │    21,802,784 │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ global_avg_pool                 │ (None, 2048)           │             0 │\n│ (GlobalAveragePooling2D)        │                        │               │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ features (Dense)                │ (None, 1024)           │     2,098,176 │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ head_dropout (Dropout)          │ (None, 1024)           │             0 │\n├─────────────────────────────────┼────────────────────────┼───────────────┤\n│ predictions (Dense)             │ (None, 10)             │        10,250 │\n└─────────────────────────────────┴────────────────────────┴───────────────┘\n Total params: 40,275,136 (153.64 MB)\n Trainable params: 8,181,962 (31.21 MB)\n Non-trainable params: 15,729,248 (60.00 MB)\n Optimizer params: 16,363,926 (62.42 MB)\n"
+  },
+  "dataset": {
+    "name": "CIFAR-10",
+    "source": "keras.datasets.cifar10 (https://www.cs.toronto.edu/~kriz/cifar.html)",
+    "original_image_size": [
+      32,
+      32
+    ],
+    "num_classes": 10,
+    "sample_sizes": {
+      "train": 40000,
+      "validation": 4000,
+      "test": 10000
+    },
+    "train_samples_per_class": {
+      "airplane": 4000,
+      "automobile": 4000,
+      "bird": 4000,
+      "cat": 4000,
+      "deer": 4000,
+      "dog": 4000,
+      "frog": 4000,
+      "horse": 4000,
+      "ship": 4000,
+      "truck": 4000
+    },
+    "validation_samples_per_class": {
+      "airplane": 400,
+      "automobile": 400,
+      "bird": 400,
+      "cat": 400,
+      "deer": 400,
+      "dog": 400,
+      "frog": 400,
+      "horse": 400,
+      "ship": 400,
+      "truck": 400
+    },
+    "validation_split": "stratified subset of 400 images per class from the 5000-image validation split (seed 42)"
+  },
+  "class_names": [
+    "airplane",
+    "automobile",
+    "bird",
+    "cat",
+    "deer",
+    "dog",
+    "frog",
+    "horse",
+    "ship",
+    "truck"
+  ],
+  "preprocessing": {
+    "color_mode": "RGB",
+    "input_size": [
+      128,
+      128
+    ],
+    "input_shape": [
+      128,
+      128,
+      3
+    ],
+    "resize_method": "bilinear",
+    "keep_aspect_ratio": false,
+    "scaling": "-1_1",
+    "formula": "x / 127.5 - 1.0",
+    "dtype": "float32",
+    "steps": [
+      "Convert the image to RGB (drop alpha, expand grayscale).",
+      "Resize to width=128, height=128 with bilinear interpolation (aspect ratio is not preserved).",
+      "Convert to a float32 array of shape (h, w, 3).",
+      "Scale pixel values: x / 127.5 - 1.0.",
+      "Add a batch dimension -> (1, 128, 128, 3)."
+    ]
+  },
+  "training": {
+    "optimizer": "Adam",
+    "loss": "sparse_categorical_crossentropy",
+    "batch_size": 32,
+    "augmentation": [
+      "RandomFlip(horizontal)",
+      "RandomTranslation(0.1, 0.1, fill_mode=reflect)"
+    ],
+    "callbacks": [
+      "phase 2: EarlyStopping(monitor=val_accuracy, patience=2, restore_best_weights=True)"
+    ],
+    "phases": [
+      {
+        "name": "head",
+        "base_frozen": true,
+        "learning_rate": 0.001,
+        "epochs": 5,
+        "parameters": {
+          "total": 23911210,
+          "trainable": 2108426,
+          "non_trainable": 21802784
+        }
+      },
+      {
+        "name": "fine_tune",
+        "unfrozen_from": "mixed9",
+        "learning_rate": 0.0001,
+        "epochs": 5,
+        "parameters": {
+          "total": 23911210,
+          "trainable": 8181962,
+          "non_trainable": 15729248
+        }
+      }
+    ],
+    "epochs_run": 10,
+    "phase_boundaries": [
+      5
+    ],
+    "history": {
+      "accuracy": [
+        0.7018499970436096,
+        0.7459250092506409,
+        0.7546250224113464,
+        0.7585750222206116,
+        0.7674750089645386,
+        0.7892749905586243,
+        0.8259000182151794,
+        0.8466749787330627,
+        0.8623250126838684,
+        0.8738999962806702
+      ],
+      "loss": [
+        0.9252592921257019,
+        0.7577885985374451,
+        0.723108172416687,
+        0.7100650072097778,
+        0.6863059997558594,
+        0.6275300979614258,
+        0.5121990442276001,
+        0.4458034634590149,
+        0.40227246284484863,
+        0.3680815100669861
+      ],
+      "val_accuracy": [
+        0.778249979019165,
+        0.7670000195503235,
+        0.7835000157356262,
+        0.7907500267028809,
+        0.7917500138282776,
+        0.8299999833106995,
+        0.8454999923706055,
+        0.8585000038146973,
+        0.8527500033378601,
+        0.859749972820282
+      ],
+      "val_loss": [
+        0.6535464525222778,
+        0.6860880851745605,
+        0.6293556094169617,
+        0.601057767868042,
+        0.6109840869903564,
+        0.4876677989959717,
+        0.4455111622810364,
+        0.43335723876953125,
+        0.4385509192943573,
+        0.4345918297767639
+      ]
+    }
+  },
+  "evaluation": {
+    "split": "test",
+    "num_samples": 10000,
+    "test_loss": 0.4527115225791931,
+    "test_accuracy": 0.8499,
+    "per_class_accuracy": {
+      "airplane": 0.886,
+      "automobile": 0.898,
+      "bird": 0.828,
+      "cat": 0.694,
+      "deer": 0.816,
+      "dog": 0.784,
+      "frog": 0.906,
+      "horse": 0.861,
+      "ship": 0.91,
+      "truck": 0.916
+    },
+    "confusion_matrix": [
+      [
+        886,
+        6,
+        26,
+        4,
+        5,
+        0,
+        4,
+        4,
+        44,
+        21
+      ],
+      [
+        17,
+        898,
+        4,
+        3,
+        1,
+        0,
+        3,
+        3,
+        19,
+        52
+      ],
+      [
+        21,
+        0,
+        828,
+        24,
+        53,
+        11,
+        48,
+        10,
+        4,
+        1
+      ],
+      [
+        12,
+        9,
+        36,
+        694,
+        38,
+        108,
+        60,
+        23,
+        8,
+        12
+      ],
+      [
+        13,
+        2,
+        30,
+        22,
+        816,
+        14,
+        56,
+        45,
+        1,
+        1
+      ],
+      [
+        7,
+        3,
+        22,
+        100,
+        16,
+        784,
+        20,
+        44,
+        1,
+        3
+      ],
+      [
+        11,
+        1,
+        20,
+        30,
+        19,
+        6,
+        906,
+        2,
+        3,
+        2
+      ],
+      [
+        15,
+        1,
+        15,
+        10,
+        50,
+        35,
+        4,
+        861,
+        5,
+        4
+      ],
+      [
+        50,
+        11,
+        4,
+        1,
+        2,
+        2,
+        0,
+        1,
+        910,
+        19
+      ],
+      [
+        13,
+        45,
+        2,
+        6,
+        3,
+        0,
+        1,
+        1,
+        13,
+        916
+      ]
+    ]
+  },
+  "feature_extraction": {
+    "layer": "features",
+    "dimension": 1024,
+    "split": "test",
+    "num_samples": 10000,
+    "file": "features_test.npz"
+  },
+  "files": {
+    "model": "model.keras",
+    "passport": "passport.json",
+    "features": "features_test.npz",
+    "training_curves": "training_curves.png"
+  },
+  "environment": {
+    "tensorflow": "2.21.0",
+    "keras": "3.15.1",
+    "python": "3.11.18"
+  },
+  "created_utc": "2026-11-13T02:09:24+00:00"
+}
