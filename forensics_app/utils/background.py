@@ -41,6 +41,8 @@ def run_with_progress(
     job: Callable[..., T],
     /,
     *args: Any,
+    cancel_event: threading.Event | None = None,
+    cancel_label: str = "Stop Training",
     **kwargs: Any,
 ) -> T:
     """Run ``job(*args, **kwargs)`` in a worker thread behind a progress window.
@@ -76,13 +78,30 @@ def run_with_progress(
         bar.pack(padx=18, pady=4)
         elapsed = tk.StringVar(value="Elapsed: 0 s")
         ttk.Label(dialog, textvariable=elapsed).pack(padx=18, pady=(4, 6))
+        status_var = tk.StringVar(
+            value="Please wait; this window closes when the job finishes."
+        )
         ttk.Label(
             dialog,
-            text="Please wait; this window closes when the job finishes.",
+            textvariable=status_var,
             foreground="#666666",
-        ).pack(padx=18, pady=(0, 14))
-        # The job cannot be interrupted safely, so the window cannot be closed.
-        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+        ).pack(padx=18, pady=(0, 10 if cancel_event is not None else 14))
+
+        if cancel_event is not None:
+            cancel_btn: ttk.Button | None = None
+
+            def _on_cancel() -> None:
+                cancel_event.set()
+                status_var.set("Stopping… please wait for the current step to finish.")
+                if cancel_btn is not None:
+                    cancel_btn.configure(state="disabled", text="Stopping…")
+
+            cancel_btn = ttk.Button(dialog, text=cancel_label, command=_on_cancel)
+            cancel_btn.pack(padx=18, pady=(0, 14))
+            dialog.protocol("WM_DELETE_WINDOW", _on_cancel)
+        else:
+            # The job cannot be interrupted safely, so the window cannot be closed.
+            dialog.protocol("WM_DELETE_WINDOW", lambda: None)
         bar.start(12)
         dialog.grab_set()
 

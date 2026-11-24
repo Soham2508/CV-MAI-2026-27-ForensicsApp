@@ -23,6 +23,7 @@ from matplotlib import colormaps
 from matplotlib.figure import Figure
 import numpy as np
 from PIL import Image
+from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import silhouette_score
 import torch
@@ -35,8 +36,12 @@ from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 from .cnn_common import (
+    BatchPreprocessor,
+    CIFAR10IndexedDataset,
+    DEFAULT_CIFAR10_DIR,
     DEFAULT_CNN_ROOT,
     find_latest_cnn_model_dir,
+    get_cifar10_test_cache,
     list_saved_cnn_models,
     load_cnn_bundle,
     load_imagenet_pretrained_bundle,
@@ -119,7 +124,7 @@ def extract_and_save_test_features(
     dataset_dir: str | Path = DEFAULT_DATASET_DIR,
     max_samples_per_class: int = 0,
     layer_name: str = "auto",
-    batch_size: int = 32,
+    batch_size: int = 64,
     device_preference: str = "auto",
     output_dir: str | Path | None = None,
     seed: int = 42,
@@ -166,7 +171,19 @@ def extract_and_save_test_features(
                     filtered.append(rec)
                     per_cls[cid] = per_cls.get(cid, 0) + 1
             records = filtered
-        test_ds = _PassportRecordsDataset(records, passport)
+        if all("cifar_index" in rec for rec in records):
+            ds_dir = passport.get("dataset", {}).get(
+                "dataset_dir", DEFAULT_CIFAR10_DIR
+            )
+            data, targets = get_cifar10_test_cache(ds_dir)
+            test_ds = CIFAR10IndexedDataset(
+                data,
+                targets,
+                [int(r["cifar_index"]) for r in records],
+                passport["preprocessing"],
+            )
+        else:
+            test_ds = _PassportRecordsDataset(records, passport)
         class_names = list(passport["class_names"])
         dataset_name = str(passport.get("dataset", {}).get("dataset_name", "test"))
         save_root = resolve_path(output_dir or bundle["model_dir"])
@@ -183,22 +200,76 @@ def extract_and_save_test_features(
 
     model = bundle["model"]
     device = bundle["device"]
+    dev_info = bundle["device_info"]
     model.eval()
+
+    use_cuda = device.type == "cuda"
+    batch_prep: BatchPreprocessor | None = None
+    if use_cuda:
+        torch.backends.cudnn.benchmark = True
+        if hasattr(test_ds, "enable_gpu_batch_preprocessing"):
+            test_ds.enable_gpu_batch_preprocessing()
+        batch_prep = BatchPreprocessor(passport["preprocessing"], device)
+
+    input_size = int(passport.get("preprocessing", {}).get("input_size", [32, 32])[0])
+    vram_mb = dev_info.get("vram_mb") or 0
+    eff_batch = min(int(batch_size), len(test_ds))
+    if use_cuda and input_size >= 224 and 0 < vram_mb <= 4096:
+        eff_batch = min(eff_batch, 64)
+    eff_batch = max(1, eff_batch)
+
     loader = DataLoader(
         test_ds,
-        batch_size=max(1, min(int(batch_size), len(test_ds))),
+        batch_size=eff_batch,
         shuffle=False,
+        pin_memory=use_cuda,
     )
 
     feat_chunks: list[np.ndarray] = []
     label_chunks: list[np.ndarray] = []
-    non_blocking = device.type == "cuda"
-    with torch.no_grad():
-        for inputs, targets in loader:
-            inputs = inputs.to(device, non_blocking=non_blocking)
-            feats = _extract_batch_features(model, inputs, chosen_layer)
-            feat_chunks.append(feats.detach().cpu().numpy().astype(np.float32))
-            label_chunks.append(targets.numpy().astype(np.int64))
+    use_extract_method = hasattr(model, "extract_features")
+    captured: list[torch.Tensor] = []
+    hook_handle = None
+    if not use_extract_method:
+        target_layer = getattr(model, "avgpool", None)
+        if target_layer is None:
+            raise ValueError(
+                f"Model {model.__class__.__name__} does not expose "
+                "'extract_features' or 'avgpool'."
+            )
+        hook_handle = target_layer.register_forward_hook(
+            lambda _mod, _inp, out: captured.append(torch.flatten(out, 1))
+        )
+
+    try:
+        with torch.no_grad(), torch.amp.autocast("cuda", enabled=use_cuda):
+            for inputs, targets in loader:
+                inputs = inputs.to(device, non_blocking=use_cuda)
+                if batch_prep is not None:
+                    inputs = batch_prep(inputs)
+                if use_extract_method:
+                    if (
+                        chosen_layer == "avgpool"
+                        and model.__class__.__name__ == "InceptionV3Classifier"
+                    ):
+                        feats = model.extract_features(inputs, layer_name="avgpool")
+                    else:
+                        feats = model.extract_features(inputs)
+                else:
+                    captured.clear()
+                    _ = model(inputs)
+                    if not captured:
+                        raise RuntimeError(
+                            "Forward hook failed to capture features from avgpool."
+                        )
+                    feats = captured[0]
+                feat_chunks.append(
+                    feats.detach().to(dtype=torch.float32).cpu().numpy()
+                )
+                label_chunks.append(targets.numpy().astype(np.int64))
+    finally:
+        if hook_handle is not None:
+            hook_handle.remove()
 
     features = np.concatenate(feat_chunks, axis=0)
     labels = np.concatenate(label_chunks, axis=0)
@@ -207,7 +278,7 @@ def extract_and_save_test_features(
     save_root.mkdir(parents=True, exist_ok=True)
     npz_path = save_root / "features_test.npz"
     meta_path = save_root / "features_meta.json"
-    np.savez_compressed(
+    np.savez(
         npz_path,
         features=features,
         labels=labels,
@@ -216,7 +287,12 @@ def extract_and_save_test_features(
     )
 
     elapsed_ms = (time.perf_counter() - t0) * 1000.0
-    dev_info = bundle["device_info"]
+    dev_label = dev_info.get("gpu_name") or dev_info.get("device")
+    print(
+        f"[CNNFeatureProjection] Extracted {features.shape[0]} x {features.shape[1]}-D "
+        f"features ({chosen_layer}) in {elapsed_ms:.1f} ms on {dev_label} -> {npz_path}",
+        flush=True,
+    )
     metadata = {
         "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "model_id": passport.get("model_id", ""),
@@ -315,24 +391,46 @@ def project_features_2d(
             f"Unsupported projection method: {method!r}. Use 'tsne', 'umap', or 'both'."
         )
 
+    t0 = time.perf_counter()
     results: dict[str, Any] = {}
     unique_labels = np.unique(y)
     can_silhouette = len(unique_labels) >= 2 and n_samples > len(unique_labels)
+    sil_kwargs: dict[str, Any] = (
+        {"sample_size": 2000, "random_state": int(random_state)}
+        if n_samples > 2000
+        else {}
+    )
+
+    if X.shape[1] > 50 and n_samples > 50:
+        pca_dim = min(50, n_samples - 1)
+        X_proj = np.asarray(
+            PCA(n_components=pca_dim, random_state=int(random_state)).fit_transform(X),
+            dtype=np.float32,
+        )
+    else:
+        X_proj = X
 
     if mode in ("tsne", "both"):
         eff_perp = min(float(perplexity), max(2.0, float(n_samples - 1) / 3.0))
         eff_iter = max(250, int(tsne_max_iter))
-        init_mode = "pca" if X.shape[1] >= 2 and n_samples >= 4 else "random"
-        tsne = TSNE(
-            n_components=2,
-            perplexity=eff_perp,
-            max_iter=eff_iter,
-            init=init_mode,
-            learning_rate="auto",
-            random_state=int(random_state),
+        init_mode = "pca" if X_proj.shape[1] >= 2 and n_samples >= 4 else "random"
+        tsne_kwargs: dict[str, Any] = {
+            "n_components": 2,
+            "perplexity": eff_perp,
+            "max_iter": eff_iter,
+            "init": init_mode,
+            "learning_rate": "auto",
+            "random_state": int(random_state),
+        }
+        if "n_jobs" in inspect.signature(TSNE.__init__).parameters:
+            tsne_kwargs["n_jobs"] = -1
+        tsne = TSNE(**tsne_kwargs)
+        coords_tsne = tsne.fit_transform(X_proj)
+        sil_tsne = (
+            float(silhouette_score(coords_tsne, y, **sil_kwargs))
+            if can_silhouette
+            else None
         )
-        coords_tsne = tsne.fit_transform(X)
-        sil_tsne = float(silhouette_score(coords_tsne, y)) if can_silhouette else None
         results["tsne"] = {
             "coords": coords_tsne,
             "perplexity_used": round(eff_perp, 2),
@@ -353,8 +451,12 @@ def project_features_2d(
         if "compatibility_layout" in inspect.signature(umap.UMAP.__init__).parameters:
             umap_kwargs["compatibility_layout"] = False
         reducer = umap.UMAP(**umap_kwargs)
-        coords_umap = np.asarray(reducer.fit_transform(X), dtype=np.float32)
-        sil_umap = float(silhouette_score(coords_umap, y)) if can_silhouette else None
+        coords_umap = np.asarray(reducer.fit_transform(X_proj), dtype=np.float32)
+        sil_umap = (
+            float(silhouette_score(coords_umap, y, **sil_kwargs))
+            if can_silhouette
+            else None
+        )
         results["umap"] = {
             "coords": coords_umap,
             "n_neighbors_used": eff_neighbors,
@@ -363,6 +465,12 @@ def project_features_2d(
             "silhouette": sil_umap,
         }
 
+    proj_ms = (time.perf_counter() - t0) * 1000.0
+    print(
+        f"[CNNFeatureProjection] 2D projection ({mode}) on {n_samples} samples "
+        f"({X.shape[1]}-D -> {X_proj.shape[1]}-D) finished in {proj_ms:.1f} ms",
+        flush=True,
+    )
     return results
 
 

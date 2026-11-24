@@ -38,6 +38,21 @@ DEFAULT_CNN_ROOT = MODELS_DIR / "cnn"
 DEFAULT_CNN_MODEL_DIR = DEFAULT_CNN_ROOT / "cnn_model_001"
 DEFAULT_CIFAR10_DIR = DATASETS_DIR / "cifar10"
 
+_CIFAR10_TEST_CACHE: dict[str, tuple[np.ndarray, list[int]]] = {}
+
+
+def get_cifar10_test_cache(dataset_dir: str | Path) -> tuple[np.ndarray, list[int]]:
+    """Load and cache the CIFAR-10 test arrays in memory per dataset directory."""
+    resolved = resolve_record_path(dataset_dir)
+    key = str(resolved.resolve()) if resolved.exists() else str(resolved)
+    cached = _CIFAR10_TEST_CACHE.get(key)
+    if cached is not None:
+        return cached
+    test_ds = torchvision.datasets.CIFAR10(root=str(resolved), train=False, download=True)
+    entry = (test_ds.data, [int(t) for t in test_ds.targets])
+    _CIFAR10_TEST_CACHE[key] = entry
+    return entry
+
 CIFAR10_CLASS_NAMES = [
     "airplane",
     "automobile",
@@ -244,6 +259,9 @@ class ShallowCNN(nn.Module):
         h = self.flatten(self.features(x))
         return self.relu(self.fc1(h))
 
+    def forward_head(self, pooled: torch.Tensor) -> torch.Tensor:
+        return self.classifier(pooled)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.classifier(self.extract_features(x))
 
@@ -271,6 +289,9 @@ class DeeperVGG(nn.Module):
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
         h = self.flatten(self.features(x))
         return self.relu(self.fc1(h))
+
+    def forward_head(self, pooled: torch.Tensor) -> torch.Tensor:
+        return self.classifier(pooled)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.classifier(self.extract_features(x))
@@ -309,6 +330,9 @@ class CompleteVGG(nn.Module):
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
         h = self.flatten(self.features(x))
         return self.relu(self.fc1(h))
+
+    def forward_head(self, pooled: torch.Tensor) -> torch.Tensor:
+        return self.classifier(pooled)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.classifier(self.extract_features(x))
@@ -364,6 +388,9 @@ class InceptionV3Classifier(nn.Module):
             return pooled
         return self.relu(self.custom_dense(pooled))
 
+    def forward_head(self, pooled: torch.Tensor) -> torch.Tensor:
+        return self.classifier(self.dropout(self.relu(self.custom_dense(pooled))))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         feat = self.extract_features(x, "custom_dense")
         return self.classifier(self.dropout(feat))
@@ -400,6 +427,9 @@ class ResNet50Classifier(nn.Module):
 
     def extract_features(self, x: torch.Tensor) -> torch.Tensor:
         return self.backbone(x)
+
+    def forward_head(self, pooled: torch.Tensor) -> torch.Tensor:
+        return self.classifier(pooled)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.classifier(self.extract_features(x))
@@ -513,6 +543,40 @@ def preprocess_pil_image(
     return tensor
 
 
+class BatchPreprocessor:
+    """Convert raw uint8 NCHW batches to resized, normalized float32 on device."""
+
+    def __init__(self, preprocessing: dict[str, Any], device: torch.device) -> None:
+        h, w = [int(v) for v in preprocessing["input_size"]]
+        self.size = (h, w)
+        self.is_imagenet = preprocessing.get("normalization") == "imagenet"
+        if self.is_imagenet:
+            self.mean: torch.Tensor | None = torch.tensor(
+                preprocessing.get("mean", IMAGENET_MEAN),
+                dtype=torch.float32,
+                device=device,
+            ).view(1, 3, 1, 1)
+            self.std: torch.Tensor | None = torch.tensor(
+                preprocessing.get("std", IMAGENET_STD),
+                dtype=torch.float32,
+                device=device,
+            ).view(1, 3, 1, 1)
+        else:
+            self.mean = None
+            self.std = None
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        if x.dtype == torch.uint8:
+            x = x.to(dtype=torch.float32).div_(255.0)
+            if x.shape[2] != self.size[0] or x.shape[3] != self.size[1]:
+                x = torch.nn.functional.interpolate(
+                    x, size=self.size, mode="bilinear", align_corners=False
+                )
+            if self.is_imagenet and self.mean is not None and self.std is not None:
+                x = (x - self.mean) / self.std
+        return x
+
+
 class ImageRecordDataset(Dataset):
     """PyTorch Dataset backed by disk records and a passport preprocessing spec."""
 
@@ -564,24 +628,22 @@ class CIFAR10IndexedDataset(Dataset):
         self._labels = torch.tensor(
             [int(targets[i]) for i in self.indices], dtype=torch.long
         )
+        self._raw_batch_mode = False
+        self._raw_uint8: torch.Tensor | None = None
         self._tensors: torch.Tensor | None = self._maybe_preload_tensors()
 
     def _maybe_preload_tensors(self) -> torch.Tensor | None:
         if not self.indices:
             return None
         h, w = [int(v) for v in self.preprocessing["input_size"]]
+        sub = np.ascontiguousarray(self.data[self.indices], dtype=np.uint8)
+        raw_uint8 = torch.from_numpy(sub).permute(0, 3, 1, 2).contiguous()
         est_bytes = len(self.indices) * 3 * h * w * 4
         if est_bytes > self._MAX_PRELOAD_BYTES:
+            self._raw_uint8 = raw_uint8
             return None
 
-        sub = np.ascontiguousarray(self.data[self.indices], dtype=np.uint8)
-        tensors = (
-            torch.from_numpy(sub)
-            .permute(0, 3, 1, 2)
-            .contiguous()
-            .to(dtype=torch.float32)
-            .div_(255.0)
-        )
+        tensors = raw_uint8.to(dtype=torch.float32).div_(255.0)
         if tensors.shape[2] != h or tensors.shape[3] != w:
             tensors = torch.nn.functional.interpolate(
                 tensors, size=(h, w), mode="bilinear", align_corners=False
@@ -596,12 +658,21 @@ class CIFAR10IndexedDataset(Dataset):
             tensors.sub_(mean).div_(std)
         return tensors
 
+    def enable_gpu_batch_preprocessing(self) -> bool:
+        """Yield raw uint8 NCHW tensors when large target sizes skip CPU preloading."""
+        if self._tensors is None and self._raw_uint8 is not None:
+            self._raw_batch_mode = True
+            return True
+        return False
+
     def __len__(self) -> int:
         return len(self.indices)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
         if self._tensors is not None:
             return self._tensors[index], int(self._labels[index])
+        if self._raw_batch_mode and self._raw_uint8 is not None:
+            return self._raw_uint8[index], int(self._labels[index])
         src_idx = self.indices[index]
         arr = self.data[src_idx]
         img = Image.fromarray(arr, mode="RGB")
@@ -1039,14 +1110,10 @@ def load_test_record_image(
 ) -> Image.Image:
     """Load an individual test-set PIL image from either disk or cached CIFAR-10."""
     if "cifar_index" in record:
-        ds_dir = resolve_record_path(
-            passport.get("dataset", {}).get("dataset_dir", DEFAULT_CIFAR10_DIR)
-        )
-        test_ds = torchvision.datasets.CIFAR10(
-            root=str(ds_dir), train=False, download=True
-        )
+        ds_dir = passport.get("dataset", {}).get("dataset_dir", DEFAULT_CIFAR10_DIR)
+        data, _ = get_cifar10_test_cache(ds_dir)
         idx = int(record["cifar_index"])
-        return Image.fromarray(test_ds.data[idx], mode="RGB")
+        return Image.fromarray(data[idx], mode="RGB")
 
     img_path = resolve_record_path(record["path"])
     if not img_path.is_file():

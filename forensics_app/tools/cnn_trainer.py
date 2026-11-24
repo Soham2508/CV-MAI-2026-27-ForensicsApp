@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -22,7 +23,7 @@ from PIL import Image
 from sklearn.metrics import accuracy_score, confusion_matrix
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, TensorDataset
 
 from forensics_app.core import ImageDocument
 from forensics_app.paths import resolve_path
@@ -30,6 +31,7 @@ from forensics_app.utils.background import run_with_progress
 
 from .base import ForensicsTool, ToolResult
 from .cnn_common import (
+    BatchPreprocessor,
     CNN_ARCHITECTURES,
     DEFAULT_CNN_ROOT,
     build_cnn_model,
@@ -71,12 +73,60 @@ def _make_optimizer(
     raise ValueError(f"Unsupported optimizer: {name!r}. Choose 'SGD' or 'Adam'.")
 
 
+class _HeadWrapper(nn.Module):
+    """Trainable head wrapper operating on cached frozen-backbone features."""
+
+    def __init__(self, parent_model: nn.Module) -> None:
+        super().__init__()
+        self.parent_model = parent_model
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.parent_model.forward_head(x)
+
+
+def _extract_backbone_features(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+    *,
+    batch_prep: BatchPreprocessor | None = None,
+    use_amp: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> tuple[TensorDataset | None, bool]:
+    """Run one frozen-backbone pass to cache pooled feature vectors on CPU."""
+    backbone = getattr(model, "backbone", None)
+    if backbone is None:
+        return None, False
+
+    backbone.eval()
+    feats_all: list[torch.Tensor] = []
+    labels_all: list[torch.Tensor] = []
+    non_blocking = device.type == "cuda"
+    amp_enabled = use_amp and device.type == "cuda"
+
+    with torch.no_grad(), torch.amp.autocast("cuda", enabled=amp_enabled):
+        for inputs, targets in loader:
+            if cancel_event is not None and cancel_event.is_set():
+                return None, True
+            inputs = inputs.to(device, non_blocking=non_blocking)
+            if batch_prep is not None:
+                inputs = batch_prep(inputs)
+            pooled = backbone(inputs)
+            feats_all.append(pooled.detach().to(dtype=torch.float32).cpu())
+            labels_all.append(targets.to(dtype=torch.long).cpu())
+
+    if not feats_all:
+        return None, False
+    return TensorDataset(torch.cat(feats_all), torch.cat(labels_all)), False
+
+
 def _evaluate_loader(
     model: nn.Module,
     loader: DataLoader | None,
     criterion: nn.Module,
     device: torch.device,
     *,
+    batch_prep: BatchPreprocessor | None = None,
     use_amp: bool = False,
 ) -> tuple[float | None, float | None, np.ndarray, np.ndarray]:
     """Run forward evaluation without gradients; return (loss, acc, y_true, y_pred)."""
@@ -99,6 +149,8 @@ def _evaluate_loader(
     with torch.no_grad(), torch.amp.autocast("cuda", enabled=amp_enabled):
         for inputs, targets in loader:
             inputs = inputs.to(device, non_blocking=non_blocking)
+            if batch_prep is not None:
+                inputs = batch_prep(inputs)
             targets = targets.to(device, dtype=torch.long, non_blocking=non_blocking)
             logits = model(inputs)
             loss = criterion(logits, targets)
@@ -133,13 +185,20 @@ def _run_epochs(
     phase_name: str,
     history: dict[str, list[Any]],
     *,
+    batch_prep: BatchPreprocessor | None = None,
     use_amp: bool = False,
     scaler: torch.amp.GradScaler | None = None,
-) -> None:
-    """Execute ``epochs`` training passes and append metrics to ``history``."""
+    cancel_event: threading.Event | None = None,
+) -> bool:
+    """Execute ``epochs`` training passes and append metrics to ``history``.
+
+    Returns ``True`` if stopped early via ``cancel_event``, ``False`` otherwise.
+    """
     non_blocking = device.type == "cuda"
     amp_enabled = use_amp and device.type == "cuda"
     for _ in range(int(epochs)):
+        if cancel_event is not None and cancel_event.is_set():
+            return True
         ep_t0 = time.perf_counter()
         model.train()
         running_loss = torch.zeros((), device=device, dtype=torch.float64)
@@ -147,7 +206,11 @@ def _run_epochs(
         total = 0
 
         for inputs, targets in train_loader:
+            if cancel_event is not None and cancel_event.is_set():
+                return True
             inputs = inputs.to(device, non_blocking=non_blocking)
+            if batch_prep is not None:
+                inputs = batch_prep(inputs)
             targets = targets.to(device, dtype=torch.long, non_blocking=non_blocking)
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast("cuda", enabled=amp_enabled):
@@ -170,7 +233,12 @@ def _run_epochs(
         tr_loss = float(running_loss.item()) / max(1, total)
         tr_acc = float(correct.item()) / max(1, total)
         va_loss, va_acc, _, _ = _evaluate_loader(
-            model, val_loader, criterion, device, use_amp=amp_enabled
+            model,
+            val_loader,
+            criterion,
+            device,
+            batch_prep=batch_prep,
+            use_amp=amp_enabled,
         )
         ep_dt = time.perf_counter() - ep_t0
 
@@ -208,6 +276,7 @@ def _run_epochs(
             f"{val_str} | {ep_dt:.2f}s",
             flush=True,
         )
+    return False
 
 
 def render_training_summary_image(passport: dict[str, Any]) -> Image.Image:
@@ -332,7 +401,11 @@ def render_training_summary_image(passport: dict[str, Any]) -> Image.Image:
     return Image.open(buf).convert("RGB")
 
 
-def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
+def train_cnn_model(
+    parameters: dict[str, Any],
+    *,
+    cancel_event: threading.Event | None = None,
+) -> dict[str, Any]:
     """Train a classification CNN, evaluate on held-out test set, and save passport."""
     arch_key = resolve_arch_key(parameters.get("arch_key", "deeper_vgg"))
     spec = CNN_ARCHITECTURES[arch_key]
@@ -391,7 +464,22 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Training split is empty.")
 
     pin_mem = device.type == "cuda"
+    batch_prep: BatchPreprocessor | None = None
+    if device.type == "cuda":
+        for ds_obj in (train_ds, val_ds, test_ds):
+            if ds_obj is not None and hasattr(ds_obj, "enable_gpu_batch_preprocessing"):
+                ds_obj.enable_gpu_batch_preprocessing()
+        batch_prep = BatchPreprocessor(preprocessing, device)
+
     eff_batch = min(batch_size, len(train_ds))
+    # Avoid VRAM spillover to system RAM on 4 GB GPUs at high input resolutions.
+    vram_mb = device_info.get("vram_mb") or 0
+    if device.type == "cuda" and input_size >= 224 and 0 < vram_mb <= 4096:
+        eff_batch = min(eff_batch, 64)
+        eval_batch = min(batch_size, 64)
+    else:
+        eval_batch = batch_size
+
     # Avoid trailing batch of size 1 which fails BatchNorm2d in training mode.
     drop_last = len(train_ds) > eff_batch and (len(train_ds) % eff_batch == 1)
     train_loader = DataLoader(
@@ -402,12 +490,12 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
         pin_memory=pin_mem,
     )
     val_loader = (
-        DataLoader(val_ds, batch_size=batch_size, shuffle=False, pin_memory=pin_mem)
+        DataLoader(val_ds, batch_size=eval_batch, shuffle=False, pin_memory=pin_mem)
         if val_ds is not None and len(val_ds) > 0
         else None
     )
     test_loader = DataLoader(
-        test_ds, batch_size=batch_size, shuffle=False, pin_memory=pin_mem
+        test_ds, batch_size=eval_batch, shuffle=False, pin_memory=pin_mem
     )
 
     model = build_cnn_model(
@@ -460,28 +548,106 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
     )
 
     optimizer = _make_optimizer(optimizer_name, trainable_params_list, learning_rate)
-    _run_epochs(
-        model,
-        train_loader,
-        val_loader,
-        criterion,
-        optimizer,
-        device,
-        epochs,
-        "train",
-        history,
-        use_amp=use_amp,
-        scaler=scaler,
+    use_cached_features = (
+        spec.is_transfer_learning
+        and freeze_backbone
+        and hasattr(model, "backbone")
+        and hasattr(model, "forward_head")
+        and (len(train_ds) * spec.feature_dim * 4 <= 1024 * 1024 * 1024)
     )
 
-    if spec.is_transfer_learning and fine_tune_epochs > 0:
+    head_model: nn.Module | None = None
+    feat_train_loader: DataLoader | None = None
+    feat_val_loader: DataLoader | None = None
+    stopped_early = False
+
+    if use_cached_features:
+        print(
+            "[CNNTrainer] Caching frozen backbone features once for fast head training...",
+            flush=True,
+        )
+        extract_train_loader = DataLoader(
+            train_ds, batch_size=eff_batch, shuffle=False, pin_memory=pin_mem
+        )
+        train_feat_ds, stopped_early = _extract_backbone_features(
+            model,
+            extract_train_loader,
+            device,
+            batch_prep=batch_prep,
+            use_amp=use_amp,
+            cancel_event=cancel_event,
+        )
+        val_feat_ds = None
+        if not stopped_early and val_loader is not None:
+            val_feat_ds, stopped_early = _extract_backbone_features(
+                model,
+                val_loader,
+                device,
+                batch_prep=batch_prep,
+                use_amp=use_amp,
+                cancel_event=cancel_event,
+            )
+
+        if not stopped_early and train_feat_ds is not None:
+            head_batch = min(max(batch_size, 128), len(train_feat_ds))
+            feat_train_loader = DataLoader(
+                train_feat_ds,
+                batch_size=head_batch,
+                shuffle=True,
+                pin_memory=pin_mem,
+            )
+            feat_val_loader = (
+                DataLoader(
+                    val_feat_ds,
+                    batch_size=head_batch,
+                    shuffle=False,
+                    pin_memory=pin_mem,
+                )
+                if val_feat_ds is not None
+                else None
+            )
+            head_model = _HeadWrapper(model).to(device)
+            stopped_early = _run_epochs(
+                head_model,
+                feat_train_loader,
+                feat_val_loader,
+                criterion,
+                optimizer,
+                device,
+                epochs,
+                "train",
+                history,
+                use_amp=use_amp,
+                scaler=scaler,
+                cancel_event=cancel_event,
+            )
+    else:
+        stopped_early = _run_epochs(
+            model,
+            train_loader,
+            val_loader,
+            criterion,
+            optimizer,
+            device,
+            epochs,
+            "train",
+            history,
+            batch_prep=batch_prep,
+            use_amp=use_amp,
+            scaler=scaler,
+            cancel_event=cancel_event,
+        )
+
+    did_fine_tune = False
+    if not stopped_early and spec.is_transfer_learning and fine_tune_epochs > 0:
+        did_fine_tune = True
         if hasattr(model, "set_backbone_trainable"):
             model.set_backbone_trainable(True)
         if hasattr(model, "set_head_trainable"):
             model.set_head_trainable(True)
         ft_params = [p for p in model.parameters() if p.requires_grad]
         ft_opt = _make_optimizer("Adam", ft_params, fine_tune_lr)
-        _run_epochs(
+        stopped_early = _run_epochs(
             model,
             train_loader,
             val_loader,
@@ -491,20 +657,55 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
             fine_tune_epochs,
             "fine_tune",
             history,
+            batch_prep=batch_prep,
             use_amp=use_amp,
             scaler=scaler,
+            cancel_event=cancel_event,
+        )
+
+    if stopped_early:
+        if not history["epoch"]:
+            print("[CNNTrainer] Training cancelled by user.", flush=True)
+            raise RuntimeError("CNN training cancelled by user.")
+        print(
+            f"[CNNTrainer] Training stopped early by user after "
+            f"{len(history['epoch'])} epoch(s). Evaluating and saving model...",
+            flush=True,
         )
 
     elapsed = time.perf_counter() - t0
 
-    _, train_eval_acc, _, _ = _evaluate_loader(
-        model, train_loader, criterion, device, use_amp=use_amp
-    )
-    _, val_eval_acc, _, _ = _evaluate_loader(
-        model, val_loader, criterion, device, use_amp=use_amp
-    )
+    if head_model is not None and feat_train_loader is not None and not did_fine_tune:
+        _, train_eval_acc, _, _ = _evaluate_loader(
+            head_model, feat_train_loader, criterion, device, use_amp=use_amp
+        )
+        _, val_eval_acc, _, _ = _evaluate_loader(
+            head_model, feat_val_loader, criterion, device, use_amp=use_amp
+        )
+    else:
+        _, train_eval_acc, _, _ = _evaluate_loader(
+            model,
+            train_loader,
+            criterion,
+            device,
+            batch_prep=batch_prep,
+            use_amp=use_amp,
+        )
+        _, val_eval_acc, _, _ = _evaluate_loader(
+            model,
+            val_loader,
+            criterion,
+            device,
+            batch_prep=batch_prep,
+            use_amp=use_amp,
+        )
     test_loss, test_acc, y_true, y_pred = _evaluate_loader(
-        model, test_loader, criterion, device, use_amp=use_amp
+        model,
+        test_loader,
+        criterion,
+        device,
+        batch_prep=batch_prep,
+        use_amp=use_amp,
     )
 
     cm = (
@@ -569,6 +770,7 @@ def train_cnn_model(parameters: dict[str, Any]) -> dict[str, Any]:
             "torch_version": device_info["torch_version"],
             "cuda_version": device_info["cuda_version"],
             "elapsed_seconds": round(elapsed, 3),
+            "stopped_early": stopped_early,
         },
         "training_history": history,
         "evaluation": {
@@ -980,13 +1182,16 @@ class CNNTrainerTool(ForensicsTool):
             if parameters is None:
                 return None
 
+        cancel_event = threading.Event()
         out = run_with_progress(
             parent,
             "CNN Training",
             "Training classification CNN, evaluating on held-out test set, "
             "and saving weights & model passport…",
-            train_cnn_model,
+            lambda p, ev=cancel_event: train_cnn_model(p, cancel_event=ev),
             parameters,
+            cancel_event=cancel_event,
+            cancel_label="Stop Training",
         )
         passport = out["passport"]
         arch = passport["architecture"]
