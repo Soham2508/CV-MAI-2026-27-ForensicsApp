@@ -67,14 +67,11 @@ def build_tool_registry() -> ToolRegistry:
             CodebookConstructionTool(),
             HistogramConstructionTool(),
             ImageClassificationTool(),
-<<<<<<< HEAD
-            YoloDetectionTool(),
-            BloodCellDetectionTool(),
-=======
             CNNTrainerTool(),
             CNNClassificationTool(),
             CNNFeatureProjectionTool(),
->>>>>>> 99422eb02d1785db9534ffa85ca8cd7927324b01
+            YoloDetectionTool(),
+            BloodCellDetectionTool(),
         ]
     )
 
@@ -92,12 +89,9 @@ __all__ = [
     "CodebookConstructionTool",
     "HistogramConstructionTool",
     "ImageClassificationTool",
-<<<<<<< HEAD
-    "YoloDetectionTool",
-    "BloodCellDetectionTool",
-=======
     "CNNTrainerTool",
     "CNNClassificationTool",
     "CNNFeatureProjectionTool",
->>>>>>> 99422eb02d1785db9534ffa85ca8cd7927324b01
+    "YoloDetectionTool",
+    "BloodCellDetectionTool",
 ]
