@@ -46,6 +46,8 @@ from .clip_common import (
     resolve_device,
     softmax_probabilities,
     source_image,
+    template_and_ensemble_embeddings,
+    thumbnail,
 )
 
 MODE_CLASSIFY = "classify"
@@ -116,8 +118,8 @@ class ZeroShotResult:
 
     @property
     def top(self) -> tuple[str, float]:
-        label, prob, _ = self.ranked()[0]
-        return label, prob
+        idx = int(np.argmax(self.probabilities))
+        return self.labels[idx], float(self.probabilities[idx])
 
 
 def _check_labels(labels: list[str]) -> None:
@@ -172,20 +174,20 @@ def compare_templates(
 ) -> list[tuple[str, ZeroShotResult]]:
     """One result per template, then the ensemble of all of them."""
     _check_labels(labels)
+    started = time.perf_counter()
     image_emb = embed_images(model, processor, [image], device)
+    per_template, ensemble = template_and_ensemble_embeddings(
+        model, processor, labels, templates, device
+    )
     scale = logit_scale(model)
     panels: list[tuple[str, ZeroShotResult]] = []
-    for template in templates:
-        started = time.perf_counter()
-        text_emb = class_embeddings(model, processor, labels, [template], device)
+    for template, text_emb in zip(templates, per_template):
         sims = (image_emb @ text_emb.T)[0].numpy()
         panels.append(
             (f'"{template}"', _result(labels, [template], sims, scale, started))
         )
     if len(templates) > 1:
-        started = time.perf_counter()
-        text_emb = class_embeddings(model, processor, labels, templates, device)
-        sims = (image_emb @ text_emb.T)[0].numpy()
+        sims = (image_emb @ ensemble.T)[0].numpy()
         panels.append(
             (
                 f"ensemble of {len(templates)} templates",
@@ -205,15 +207,21 @@ def compare_models(
     labels: list[str],
     templates: list[str],
     device: str = "cpu",
+    *,
+    on_model: Callable[[int, int, str], None] | None = None,
 ) -> list[tuple[str, ZeroShotResult]]:
     """The same prompts classified by each model."""
     if not model_names:
         raise ValueError("Choose at least one model to compare.")
     panels = []
-    for name in model_names:
+    total = len(model_names)
+    for index, name in enumerate(model_names, start=1):
+        short_name = name.split("/")[-1]
+        if on_model is not None:
+            on_model(index, total, short_name)
         model, processor = loader(name, device)
         result = classify(model, processor, image, labels, templates, device)
-        panels.append((name.split("/")[-1], result))
+        panels.append((short_name, result))
     return panels
 
 
@@ -253,7 +261,7 @@ def _bars(ax: Any, result: ZeroShotResult, order: list[str], title: str) -> None
 
 
 def _show_image(ax: Any, image: Image.Image, title: str) -> None:
-    ax.imshow(image.convert("RGB"))
+    ax.imshow(thumbnail(image, 800))
     ax.set_title(title, fontsize=10)
     ax.axis("off")
 
@@ -525,7 +533,9 @@ def _models_used(parameters: dict[str, Any]) -> list[str]:
 
 
 def _run_job(
-    image: Image.Image, parameters: dict[str, Any]
+    image: Image.Image,
+    parameters: dict[str, Any],
+    set_status: Callable[[str], None] | None = None,
 ) -> tuple[Image.Image, dict[str, Any], str]:
     """Run the chosen mode; executes in a worker thread."""
     mode = parameters.get("mode", MODE_CLASSIFY)
@@ -537,8 +547,19 @@ def _run_job(
     model_name = str(parameters.get("model") or DEFAULT_MODEL)
 
     if mode == MODE_MODELS:
+        on_model = (
+            (lambda i, n, name: set_status(f"Model {i} / {n}: {name}…"))
+            if set_status is not None
+            else None
+        )
         panels = compare_models(
-            load, _models_used(parameters), image, labels, templates, device
+            load,
+            _models_used(parameters),
+            image,
+            labels,
+            templates,
+            device,
+            on_model=on_model,
         )
         figure = render_comparison(image, panels, title, template_caption(templates))
         details = {"Device": device, **comparison_details(panels, "Models")}
@@ -672,8 +693,22 @@ class ClipZeroShotTool(ForensicsTool):
             if parameters.get("mode") == MODE_MODELS
             else "Classifying…"
         )
+        status_line = [""]
+
+        def set_status(text: str) -> None:
+            status_line[0] = text
+
         figure, details, summary = run_with_progress(
-            parent, "CLIP zero-shot", message, _run_job, image, parameters
+            parent,
+            "CLIP zero-shot",
+            message,
+            _run_job,
+            image,
+            parameters,
+            set_status,
+            status=(lambda: status_line[0])
+            if parameters.get("mode") == MODE_MODELS
+            else None,
         )
         if used_original:
             details = {"Image": "original (the canvas showed a CLIP chart)", **details}

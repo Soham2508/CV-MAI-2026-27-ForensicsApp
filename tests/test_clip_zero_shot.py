@@ -158,6 +158,43 @@ class LoadingTests(unittest.TestCase):
             self.assertFalse(cc.is_model_cached("m", "cpu"))
         self.assertEqual(loads, ["m", "m", "b", "b", "c", "c"])
 
+    def test_load_uses_lru_eviction_and_local_files_only_when_downloaded(self) -> None:
+        calls: list[tuple[str, bool]] = []
+
+        class Model:
+            def to(self, _device):
+                return self
+
+            def eval(self):
+                return self
+
+        class Loader:
+            @staticmethod
+            def from_pretrained(name, cache_dir=None, local_files_only=False, **_kw):
+                calls.append((name, local_files_only))
+                return Model()
+
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(cc, "CLIP_CACHE_DIR", Path(tmp)),
+            patch.object(cc, "_import_clip", return_value=(Loader, Loader)),
+        ):
+            snap = Path(tmp) / "models--org--a" / "snapshots" / "rev1"
+            snap.mkdir(parents=True)
+            (snap / "config.json").write_text("{}")
+
+            cc.load_clip("org/a", "cpu")
+            cc.load_clip("org/b", "cpu")
+            # Touch org/a so org/b becomes least recently used.
+            cc.load_clip("org/a", "cpu")
+            cc.load_clip("org/c", "cpu")
+
+            self.assertTrue(cc.is_model_cached("org/a", "cpu"))
+            self.assertFalse(cc.is_model_cached("org/b", "cpu"))
+            self.assertTrue(cc.is_model_cached("org/c", "cpu"))
+        self.assertEqual(calls[0], ("org/a", True))
+        self.assertEqual(calls[2], ("org/b", False))
+
 
 class ClassifyTests(unittest.TestCase):
     image = solid(RED)
@@ -214,10 +251,31 @@ class ClassifyTests(unittest.TestCase):
             ],
         )
         self.assertEqual(model.images_embedded, 1)  # the image is embedded once
+        # Single-pass text encoding: 2 classes x 2 templates = 4 prompts (not 8).
+        self.assertEqual(len(model.texts), 4)
         single = cz.compare_templates(
             model, processor, self.image, ["cat", "owl"], ["{}"]
         )
         self.assertEqual(len(single), 1)
+
+    def test_embed_texts_chunks_and_requests_truncation(self) -> None:
+        seen_kwargs: list[dict] = []
+
+        class RecordingProcessor(FakeProcessor):
+            def __call__(self, images=None, text=None, **kwargs):
+                seen_kwargs.append(kwargs)
+                return super().__call__(images=images, text=text, **kwargs)
+
+        model = FakeClip()
+        emb = cc.embed_texts(
+            model,
+            RecordingProcessor(),
+            ["cat", "dog", "owl", "cat", "dog"],
+            batch_size=2,
+        )
+        self.assertEqual(tuple(emb.shape), (5, 3))
+        self.assertEqual(len(seen_kwargs), 3)
+        self.assertTrue(all(kw.get("truncation") is True for kw in seen_kwargs))
 
     def test_compare_models_loads_each_model(self) -> None:
         loaded: list[str] = []

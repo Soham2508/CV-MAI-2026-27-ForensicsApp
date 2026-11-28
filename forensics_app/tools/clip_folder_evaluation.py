@@ -10,6 +10,7 @@ saved as CSV in ``outputs/set10_clip/``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 import csv
 from dataclasses import dataclass
 from datetime import datetime
@@ -32,17 +33,19 @@ from .clip_common import (
     CLIP_MODELS,
     DEFAULT_MODEL,
     DEVICES,
-    class_embeddings,
-    embed_images,
+    ProgressCallback,
+    embed_image_paths,
     figure_to_image,
-    list_images,
+    folder_embeddings,
     load_clip,
     loading_message,
     logit_scale,
     open_rgb,
     parse_templates,
     resolve_device,
+    scan_images,
     softmax_probabilities,
+    template_and_ensemble_embeddings,
     thumbnail,
 )
 from .clip_zero_shot import ENSEMBLE_TEMPLATES
@@ -55,32 +58,43 @@ def class_text(folder_name: str) -> str:
     return " ".join(folder_name.replace("_", " ").replace("-", " ").split())
 
 
-def collect_dataset(
+def _collect_dataset_with_stats(
     root: str | Path, max_per_class: int = 0
-) -> tuple[list[str], list[str], list[Path], np.ndarray]:
-    """Return folder names, class texts, image paths and true class indices."""
+) -> tuple[list[str], list[str], list[Path], list[tuple[int, int]], np.ndarray]:
+    """Return folder names, class texts, image paths, file stats and targets."""
     root = Path(root)
     if not root.is_dir():
         raise FileNotFoundError(f"Folder not found:\n{root}")
-    folders, paths, targets = [], [], []
+    folders, paths, stats, targets = [], [], [], []
     for sub in sorted(p for p in root.iterdir() if p.is_dir()):
         if sub.name.startswith("."):
             continue
-        images = list_images(sub, recursive=True)
+        scanned = scan_images(sub, recursive=True)
         if max_per_class > 0:
-            images = images[:max_per_class]
-        if not images:
+            scanned = scanned[:max_per_class]
+        if not scanned:
             continue
         index = len(folders)
         folders.append(sub.name)
-        paths.extend(images)
-        targets.extend([index] * len(images))
+        paths.extend(p for p, _, _ in scanned)
+        stats.extend((mtime_ns, size) for _, mtime_ns, size in scanned)
+        targets.extend([index] * len(scanned))
     if len(folders) < 2:
         raise ValueError(
             "Put the images in at least two sub-folders, one per class "
             "(the folder name is the class text)."
         )
-    return folders, [class_text(f) for f in folders], paths, np.asarray(targets)
+    return folders, [class_text(f) for f in folders], paths, stats, np.asarray(targets)
+
+
+def collect_dataset(
+    root: str | Path, max_per_class: int = 0
+) -> tuple[list[str], list[str], list[Path], np.ndarray]:
+    """Return folder names, class texts, image paths and true class indices."""
+    folders, labels, paths, _stats, targets = _collect_dataset_with_stats(
+        root, max_per_class
+    )
+    return folders, labels, paths, targets
 
 
 @dataclass(frozen=True)
@@ -96,13 +110,20 @@ def score(
     name: str, templates: list[str], probs: np.ndarray, targets: np.ndarray, k: int
 ) -> SchemeScore:
     predictions = probs.argmax(axis=1)
-    top_k = np.argsort(-probs, axis=1)[:, :k]
+    accuracy = float((predictions == targets).mean())
+    if k <= 1:
+        top_k_accuracy = accuracy
+    elif k >= probs.shape[1]:
+        top_k_accuracy = 1.0
+    else:
+        top_k = np.argpartition(probs, -k, axis=1)[:, -k:]
+        top_k_accuracy = float((top_k == targets[:, None]).any(axis=1).mean())
     return SchemeScore(
         name=name,
         templates=list(templates),
         probabilities=probs,
-        accuracy=float((predictions == targets).mean()),
-        top_k_accuracy=float((top_k == targets[:, None]).any(axis=1).mean()),
+        accuracy=accuracy,
+        top_k_accuracy=top_k_accuracy,
     )
 
 
@@ -142,6 +163,7 @@ class Evaluation:
     metrics: list[tuple[float, float, float, int]]
     k: int
     elapsed_ms: float
+    from_cache: bool = False
 
 
 def evaluate_folder(
@@ -152,22 +174,41 @@ def evaluate_folder(
     device: str = "cpu",
     *,
     max_per_class: int = 0,
+    model_name: str = "",
+    progress: ProgressCallback | None = None,
 ) -> Evaluation:
     started = time.perf_counter()
-    folders, labels, paths, targets = collect_dataset(root, max_per_class)
-    images = [open_rgb(p) for p in paths]
-    image_emb = embed_images(model, processor, images, device)
+    folders, labels, paths, stats, targets = _collect_dataset_with_stats(
+        root, max_per_class
+    )
+    if model_name:
+        image_emb, from_cache = folder_embeddings(
+            model,
+            processor,
+            paths,
+            device,
+            model_name=model_name,
+            stats=stats,
+            progress=progress,
+        )
+    else:
+        image_emb = embed_image_paths(
+            model, processor, paths, device, progress=progress
+        )
+        from_cache = False
+
+    per_template, ensemble = template_and_ensemble_embeddings(
+        model, processor, labels, templates, device
+    )
     scale = logit_scale(model)
     k = min(5, len(labels) - 1) if len(labels) > 2 else 1
 
     schemes = []
-    for template in templates:
-        text_emb = class_embeddings(model, processor, labels, [template], device)
+    for template, text_emb in zip(templates, per_template):
         probs = softmax_probabilities((image_emb @ text_emb.T).numpy(), scale)
         schemes.append(score(f'"{template}"', [template], probs, targets, k))
     if len(templates) > 1:
-        text_emb = class_embeddings(model, processor, labels, templates, device)
-        probs = softmax_probabilities((image_emb @ text_emb.T).numpy(), scale)
+        probs = softmax_probabilities((image_emb @ ensemble.T).numpy(), scale)
         schemes.append(
             score(f"ensemble ({len(templates)})", templates, probs, targets, k)
         )
@@ -184,6 +225,7 @@ def evaluate_folder(
         per_class_metrics(matrix),
         k,
         (time.perf_counter() - started) * 1000.0,
+        from_cache,
     )
 
 
@@ -202,16 +244,18 @@ def mistakes(evaluation: Evaluation) -> list[tuple[int, int, float]]:
 
 def save_csv(evaluation: Evaluation, root: Path, out_dir: Path = OUTPUT_DIR) -> Path:
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder = out_dir / f"{root.name}_{stamp}"
+    dataset_name = root.name or root.resolve().name or "dataset"
+    folder = out_dir / f"{dataset_name}_{stamp}"
     folder.mkdir(parents=True, exist_ok=True)
     probs = evaluation.best.probabilities
+    predictions = probs.argmax(axis=1)
     with open(folder / "predictions.csv", "w", newline="", encoding="utf-8") as fh:
         writer = csv.writer(fh)
         writer.writerow(
             ["image", "true", "predicted", "p_predicted", "p_true", "correct"]
         )
         for i, path in enumerate(evaluation.paths):
-            t, p = int(evaluation.targets[i]), int(probs[i].argmax())
+            t, p = int(evaluation.targets[i]), int(predictions[i])
             writer.writerow(
                 [
                     str(path.relative_to(root)),
@@ -322,7 +366,9 @@ def evaluation_details(
         details[f"{label} (n={support})"] = (
             f"P {precision:.2f}  R {recall:.2f}  F1 {f1:.2f}"
         )
-    details["Mistakes"] = len(mistakes(evaluation))
+    details["Mistakes"] = int(len(evaluation.targets) - np.trace(evaluation.matrix))
+    if evaluation.from_cache:
+        details["Embeddings"] = "from cache"
     if csv_folder is not None:
         details["CSV"] = str(csv_folder)
     details["Time"] = f"{evaluation.elapsed_ms / 1000:.1f} s"
@@ -444,14 +490,23 @@ def ask_evaluation_parameters(parent: tk.Misc) -> dict[str, Any] | None:
 
 def _evaluate_job(
     parameters: dict[str, Any],
+    set_status: Callable[[str], None] | None = None,
 ) -> tuple[Evaluation, Image.Image, str, Path | None]:
     device = resolve_device(str(parameters.get("device", "auto")))
     model_name = str(parameters.get("model") or DEFAULT_MODEL)
-    if parameters.get("clip") is not None:
+    injected = parameters.get("clip") is not None
+    if injected:
         model, processor = parameters["clip"]
     else:
+        if set_status is not None:
+            set_status(f"Loading {model_name.split('/')[-1]}…")
         model, processor = load_clip(model_name, device)
     root = Path(parameters["folder"])
+    progress = (
+        (lambda done, total: set_status(f"Embedding images: {done:,} / {total:,}…"))
+        if set_status is not None
+        else None
+    )
     evaluation = evaluate_folder(
         model,
         processor,
@@ -459,12 +514,18 @@ def _evaluate_job(
         list(parameters["templates"]),
         device,
         max_per_class=int(parameters.get("max_per_class", 0)),
+        model_name="" if injected else model_name,
+        progress=progress,
     )
     csv_folder = None
     if parameters.get("save_csv"):
+        if set_status is not None:
+            set_status("Saving CSV…")
         csv_folder = save_csv(
             evaluation, root, Path(parameters.get("output_dir") or OUTPUT_DIR)
         )
+    if set_status is not None:
+        set_status("Rendering report…")
     return evaluation, render_evaluation(evaluation), device, csv_folder
 
 
@@ -484,8 +545,19 @@ def run_folder_evaluation(
         if parameters.get("clip") is not None
         else loading_message([str(parameters.get("model") or DEFAULT_MODEL)], device)
     ) + "Embedding the images and scoring every template…"
+    status_line = [""]
+
+    def set_status(text: str) -> None:
+        status_line[0] = text
+
     evaluation, figure, device, csv_folder = run_with_progress(
-        parent, "CLIP folder evaluation", message, _evaluate_job, parameters
+        parent,
+        "CLIP folder evaluation",
+        message,
+        _evaluate_job,
+        parameters,
+        set_status,
+        status=lambda: status_line[0],
     )
     model_name = str(parameters.get("model") or DEFAULT_MODEL)
     return ToolResult(

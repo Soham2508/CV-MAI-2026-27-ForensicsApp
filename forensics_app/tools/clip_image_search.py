@@ -8,6 +8,7 @@ folder only embed the query.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import time
@@ -25,22 +26,28 @@ from forensics_app.utils.background import run_with_progress
 
 from .base import ToolResult
 from .clip_common import (
+    _INDEX_CACHE as _INDEX_CACHE,
+)
+from .clip_common import (
     CLIP_MODELS,
     DEFAULT_MODEL,
     DEVICES,
-    embed_images,
+    ProgressCallback,
     embed_texts,
     figure_to_image,
-    list_images,
+    folder_embeddings,
     load_clip,
     loading_message,
     open_rgb,
     resolve_device,
+    scan_images,
     thumbnail,
+)
+from .clip_common import (
+    INDEX_CACHE_SIZE as INDEX_CACHE_SIZE,
 )
 
 DEFAULT_TOP_K = 3
-INDEX_CACHE_SIZE = 4
 
 
 @dataclass(frozen=True)
@@ -49,31 +56,17 @@ class SearchHit:
     similarity: float
 
 
-_INDEX_CACHE: dict[tuple, Any] = {}
-
-
-def _index_key(model_name: str, paths: list[Path]) -> tuple:
-    return (model_name, tuple((str(p), p.stat().st_mtime_ns) for p in paths))
-
-
-def folder_embeddings(
-    model: Any, processor: Any, paths: list[Path], device: str, *, model_name: str
-) -> tuple[Any, bool]:
-    """Embeddings of every image (cached until a file changes) and a cache flag."""
-    key = _index_key(model_name, paths)
-    if key in _INDEX_CACHE:
-        return _INDEX_CACHE[key], True
-    images = [open_rgb(p) for p in paths]
-    emb = embed_images(model, processor, images, device)
-    while len(_INDEX_CACHE) >= INDEX_CACHE_SIZE:
-        del _INDEX_CACHE[next(iter(_INDEX_CACHE))]
-    _INDEX_CACHE[key] = emb
-    return emb, False
-
-
 def rank(similarities: Any, paths: list[Path], top_k: int) -> list[SearchHit]:
     sims = np.asarray(similarities, dtype=np.float64)
-    order = np.argsort(-sims, kind="stable")[: max(1, top_k)]
+    k = min(max(1, top_k), len(sims))
+    if k < len(sims):
+        nth = np.partition(sims, len(sims) - k)[len(sims) - k]
+        above = np.flatnonzero(sims > nth)
+        equal = np.flatnonzero(sims == nth)[: k - len(above)]
+        candidates = np.concatenate((above, equal))
+        order = candidates[np.argsort(-sims[candidates], kind="stable")]
+    else:
+        order = np.argsort(-sims, kind="stable")[:k]
     return [SearchHit(paths[i], float(sims[i])) for i in order]
 
 
@@ -86,6 +79,8 @@ def search(
     *,
     model_name: str,
     top_k: int = DEFAULT_TOP_K,
+    stats: list[tuple[int, int]] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> tuple[list[SearchHit], dict[str, Any]]:
     """Rank the images by cosine similarity to a text query."""
     if not paths:
@@ -94,7 +89,13 @@ def search(
         raise ValueError("Type a text query.")
     started = time.perf_counter()
     gallery, cached = folder_embeddings(
-        model, processor, paths, device, model_name=model_name
+        model,
+        processor,
+        paths,
+        device,
+        model_name=model_name,
+        stats=stats,
+        progress=progress,
     )
     query_emb = embed_texts(model, processor, [query.strip()], device)
     sims = (query_emb @ gallery.T)[0].numpy()
@@ -262,18 +263,28 @@ def ask_search_parameters(
 
 def _search_job(
     parameters: dict[str, Any],
+    set_status: Callable[[str], None] | None = None,
 ) -> tuple[list[SearchHit], dict[str, Any], Image.Image, str, Path]:
     root = Path(parameters["folder"])
-    paths = list_images(root, bool(parameters.get("recursive", True)))
-    if not paths:
+    scanned = scan_images(root, bool(parameters.get("recursive", True)))
+    if not scanned:
         raise ValueError(f"No images found in:\n{root}")
+    paths = [p for p, _, _ in scanned]
+    stats = [(mtime_ns, size) for _, mtime_ns, size in scanned]
     device = resolve_device(str(parameters.get("device", "auto")))
     model_name = str(parameters.get("model") or DEFAULT_MODEL)
     if parameters.get("clip") is not None:
         model, processor = parameters["clip"]
     else:
+        if set_status is not None:
+            set_status(f"Loading {model_name.split('/')[-1]}…")
         model, processor = load_clip(model_name, device)
     query = str(parameters.get("text") or "")
+    progress = (
+        (lambda done, total: set_status(f"Embedding images: {done:,} / {total:,}…"))
+        if set_status is not None
+        else None
+    )
     hits, info = search(
         model,
         processor,
@@ -282,7 +293,11 @@ def _search_job(
         device,
         model_name=model_name,
         top_k=int(parameters.get("top_k", DEFAULT_TOP_K)),
+        stats=stats,
+        progress=progress,
     )
+    if set_status is not None:
+        set_status("Rendering matches…")
     return hits, info, render_hits(hits, query, root), device, root
 
 
@@ -303,8 +318,19 @@ def run_image_search(
         if parameters.get("clip") is not None
         else loading_message([str(parameters.get("model") or DEFAULT_MODEL)], device)
     ) + "Embedding the folder (first search only) and ranking…"
+    status_line = [""]
+
+    def set_status(text: str) -> None:
+        status_line[0] = text
+
     hits, info, figure, device, root = run_with_progress(
-        parent, "CLIP image search", message, _search_job, parameters
+        parent,
+        "CLIP image search",
+        message,
+        _search_job,
+        parameters,
+        set_status,
+        status=lambda: status_line[0],
     )
     best = hits[0]
     return ToolResult(

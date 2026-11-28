@@ -6,6 +6,7 @@ import csv
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 
@@ -57,6 +58,74 @@ class SearchTests(unittest.TestCase):
         self.assertEqual(model.images_embedded, embedded)
         _, info = cs.search(model, processor, self.paths(), "owl", model_name="x")
         self.assertFalse(info["from_cache"])
+
+    def test_rank_matches_stable_argsort_under_ties(self) -> None:
+        paths = [self.root / f"img_{i}.png" for i in range(6)]
+        sims = np.array([0.5, 0.9, 0.5, 0.9, 0.5, 0.1])
+        hits = cs.rank(sims, paths, top_k=4)
+        self.assertEqual(
+            [h.path.name for h in hits],
+            ["img_1.png", "img_3.png", "img_0.png", "img_2.png"],
+        )
+
+    def test_disk_cache_reuses_and_incrementally_embeds_new_images(self) -> None:
+        with tempfile.TemporaryDirectory() as cache_tmp:
+            cache_dir = Path(cache_tmp)
+            with patch.object(cc, "DISK_INDEX_CACHE_DIR", cache_dir):
+                model, processor = fake_clip()
+                paths = self.paths()
+                emb1, cached1 = cc.folder_embeddings(
+                    model,
+                    processor,
+                    paths,
+                    model_name="m",
+                    use_disk_cache=True,
+                )
+                self.assertFalse(cached1)
+                self.assertEqual(model.images_embedded, 4)
+
+                # Clear RAM cache: reload comes from disk with zero forward passes.
+                cc._INDEX_CACHE.clear()
+                emb2, cached2 = cc.folder_embeddings(
+                    model,
+                    processor,
+                    paths,
+                    model_name="m",
+                    use_disk_cache=True,
+                )
+                self.assertTrue(cached2)
+                self.assertEqual(model.images_embedded, 4)
+                np.testing.assert_allclose(emb1.numpy(), emb2.numpy(), atol=1e-6)
+
+                # Add 1 image and clear RAM: only the 1 new image is embedded.
+                cc._INDEX_CACHE.clear()
+                solid(GREEN).save(self.root / "extra_green.png")
+                new_paths = self.paths()
+                emb3, cached3 = cc.folder_embeddings(
+                    model,
+                    processor,
+                    new_paths,
+                    model_name="m",
+                    use_disk_cache=True,
+                )
+                self.assertFalse(cached3)
+                self.assertEqual(model.images_embedded, 5)
+                self.assertEqual(len(emb3), 5)
+
+                # Corrupt disk cache file: recovers gracefully by re-embedding.
+                cc._INDEX_CACHE.clear()
+                for npz in cache_dir.glob("*.npz"):
+                    npz.write_bytes(b"corrupt")
+                emb4, cached4 = cc.folder_embeddings(
+                    model,
+                    processor,
+                    new_paths,
+                    model_name="m",
+                    use_disk_cache=True,
+                )
+                self.assertFalse(cached4)
+                self.assertEqual(model.images_embedded, 10)
+                np.testing.assert_allclose(emb3.numpy(), emb4.numpy(), atol=1e-6)
 
     def test_query_and_images_are_required(self) -> None:
         model, processor = fake_clip()
@@ -131,19 +200,60 @@ class EvaluationTests(unittest.TestCase):
 
     def test_evaluate_scores_every_template_and_the_ensemble(self) -> None:
         model, processor = fake_clip()
+        progress_updates: list[tuple[int, int]] = []
         evaluation = ce.evaluate_folder(
             model,
             processor,
             self.root,
             ["a photo of a {}.", "a close-up photo of a {}."],
+            progress=lambda done, total: progress_updates.append((done, total)),
         )
         self.assertEqual(len(evaluation.schemes), 3)
+        # Single-pass text encoding: 3 classes x 2 templates = 6 prompts (not 12).
+        self.assertEqual(len(model.texts), 6)
+        self.assertEqual(progress_updates[-1], (6, 6))
         self.assertAlmostEqual(evaluation.best.accuracy, 5 / 6)
         self.assertEqual(evaluation.k, 2)
         self.assertEqual(evaluation.matrix[1, 0], 1)  # cat predicted as owl
         errors = ce.mistakes(evaluation)
         self.assertEqual(len(errors), 1)
         self.assertEqual(evaluation.paths[errors[0][0]].parent.name, "cat")
+
+    def test_evaluate_and_search_share_embedding_cache(self) -> None:
+        cc._INDEX_CACHE.clear()
+        try:
+            model, processor = fake_clip()
+            first = ce.evaluate_folder(
+                model,
+                processor,
+                self.root,
+                ["a photo of a {}."],
+                model_name="shared-m",
+            )
+            self.assertFalse(first.from_cache)
+            embedded = model.images_embedded
+
+            second = ce.evaluate_folder(
+                model,
+                processor,
+                self.root,
+                ["a close-up photo of a {}."],
+                model_name="shared-m",
+            )
+            self.assertTrue(second.from_cache)
+            self.assertEqual(model.images_embedded, embedded)
+
+            _, info = cs.search(
+                model,
+                processor,
+                first.paths,
+                "cat",
+                model_name="shared-m",
+            )
+            self.assertTrue(info["from_cache"])
+            self.assertEqual(model.images_embedded, embedded)
+        finally:
+            cc._INDEX_CACHE.clear()
 
     def test_tool_saves_csv(self) -> None:
         out = Path(self._tmp.name) / "out"
