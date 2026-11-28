@@ -30,6 +30,7 @@ from .ncc_image import NormalizedCrossCorrelationTool
 from .registry import ToolRegistry
 from .sharpen import SharpenTool
 from .ski_filters import SkiFiltersTool
+from .unet_segmentation import UNetSegmentationTool
 from .viola_jones_trainer import ViolaJonesTrainerTool
 from .webcam_detection import WebcamFaceDetectionTool
 from .yolo_detection import YoloDetectionTool
@@ -72,6 +73,7 @@ def build_tool_registry() -> ToolRegistry:
             CNNFeatureProjectionTool(),
             YoloDetectionTool(),
             BloodCellDetectionTool(),
+            UNetSegmentationTool(),
         ]
     )
 
@@ -94,4 +96,5 @@ __all__ = [
     "CNNFeatureProjectionTool",
     "YoloDetectionTool",
     "BloodCellDetectionTool",
+    "UNetSegmentationTool",
 ]
