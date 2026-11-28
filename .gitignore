@@ -21,3 +21,5 @@ runs/
 /*.pt
 # Downloaded automatically on first use
 models/yolo/pretrained/
+# CLIP: Hugging Face weights downloaded on first use
+models/clip/

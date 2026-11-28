@@ -5,6 +5,7 @@ from .blood_cell_detection import BloodCellDetectionTool
 from .canny import CannyTool
 from .channel_split import ChannelSplitTool
 from .channel_swap import ChannelSwapTool
+from .clip_zero_shot import ClipZeroShotTool
 from .cnn_classifier import CNNClassificationTool
 from .cnn_feature_projection import CNNFeatureProjectionTool
 from .cnn_trainer import CNNTrainerTool
@@ -72,6 +73,7 @@ def build_tool_registry() -> ToolRegistry:
             CNNFeatureProjectionTool(),
             YoloDetectionTool(),
             BloodCellDetectionTool(),
+            ClipZeroShotTool(),
         ]
     )
 
@@ -94,4 +96,5 @@ __all__ = [
     "CNNFeatureProjectionTool",
     "YoloDetectionTool",
     "BloodCellDetectionTool",
+    "ClipZeroShotTool",
 ]
