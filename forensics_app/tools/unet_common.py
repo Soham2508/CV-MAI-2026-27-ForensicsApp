@@ -17,10 +17,14 @@ classes, input size, architecture, training settings and metrics).
 
 from __future__ import annotations
 
-import copy
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
+import contextlib
 from dataclasses import dataclass, field
 from datetime import datetime
 import json
+import math
+import os
 from pathlib import Path
 import random
 import time
@@ -36,6 +40,7 @@ TRAY_DATASET_DIR = DATASETS_DIR / "tray" / "TrayDataset"
 SAMPLES_DIR = UNET_MODELS_DIR / "tray_samples"
 WEIGHTS_FILE = "unet.pt"
 PASSPORT_FILE = "passport.json"
+MODEL_CACHE_SIZE = 2
 
 TASK_BINARY = "binary"
 TASK_MULTICLASS = "multiclass"
@@ -111,7 +116,8 @@ def pair_files(img_dir: str | Path, mask_dir: str | Path) -> list[tuple[Path, Pa
 
 def read_mask(path: str | Path) -> np.ndarray:
     """Class index per pixel (some masks are saved with 3 identical channels)."""
-    m = np.array(Image.open(path))
+    with Image.open(path) as im:
+        m = np.array(im)
     if m.ndim == 3:
         m = m[..., 0]
     return m
@@ -132,18 +138,46 @@ def to_task(mask: np.ndarray, task: str) -> np.ndarray:
     return np.clip(mask, 0, len(CLASS_NAMES) - 1).astype(np.uint8)
 
 
+def _load_one_pair(
+    ip: Path, mp: Path, w: int, h: int, task: str
+) -> tuple[np.ndarray, np.ndarray]:
+    with Image.open(ip) as im:
+        rgb = im if im.mode == "RGB" else im.convert("RGB")
+        if rgb.size != (w, h):
+            rgb = rgb.resize((w, h), Image.BILINEAR)
+        x = np.asarray(rgb, dtype=np.uint8)
+        if x.base is not None:
+            x = x.copy()
+    with Image.open(mp) as mim:
+        # NEAREST interpolation is essential for masks: no invented class values
+        if mim.size != (w, h):
+            mim = mim.resize((w, h), Image.NEAREST)
+        m = np.asarray(mim)
+    if m.ndim == 3:
+        m = m[..., 0]
+    y = to_task(m, task)
+    return x, y
+
+
 def load_pairs(
     pairs: list[tuple[Path, Path]], size: tuple[int, int], task: str
 ) -> tuple[np.ndarray, np.ndarray]:
     """Resized images ``(N, H, W, 3)`` and task labels ``(N, H, W)`` in memory."""
     h, w = size
-    X = np.zeros((len(pairs), h, w, 3), dtype=np.uint8)
-    Y = np.zeros((len(pairs), h, w), dtype=np.uint8)
-    for i, (ip, mp) in enumerate(pairs):
-        X[i] = np.array(Image.open(ip).convert("RGB").resize((w, h), Image.BILINEAR))
-        # NEAREST interpolation is essential for masks: no invented class values
-        mask = Image.fromarray(read_mask(mp)).resize((w, h), Image.NEAREST)
-        Y[i] = to_task(np.array(mask), task)
+    n = len(pairs)
+    X = np.empty((n, h, w, 3), dtype=np.uint8)
+    Y = np.empty((n, h, w), dtype=np.uint8)
+    if n == 0:
+        return X, Y
+    if n < 16:
+        for i, (ip, mp) in enumerate(pairs):
+            X[i], Y[i] = _load_one_pair(ip, mp, w, h, task)
+        return X, Y
+    workers = min(8, os.cpu_count() or 4)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_load_one_pair, ip, mp, w, h, task) for ip, mp in pairs]
+        for i, fut in enumerate(futures):
+            X[i], Y[i] = fut.result()
     return X, Y
 
 
@@ -252,6 +286,36 @@ def resolve_device(device: str) -> str:
     return available_device() if device in ("", "auto") else device
 
 
+def _inference_autocast(device: str) -> Any:
+    """Use fp16 autocast on MPS/CUDA during inference; no-op on CPU."""
+    if device not in ("cuda", "mps"):
+        return contextlib.nullcontext()
+    import torch
+
+    try:
+        return torch.autocast(device_type=device, dtype=torch.float16)
+    except (RuntimeError, TypeError):
+        return contextlib.nullcontext()
+
+
+def _release_device_memory(model: Any, device: str) -> None:
+    if device not in ("cuda", "mps"):
+        return
+    import torch
+
+    try:
+        model.to("cpu")
+    except Exception:
+        pass
+    try:
+        if device == "cuda" and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        elif device == "mps" and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    except Exception:
+        pass
+
+
 # ---------------------------------------------------------------------------
 # Dice and losses
 # ---------------------------------------------------------------------------
@@ -269,22 +333,34 @@ def binary_loss(logits: Any, target: Any) -> Any:
     import torch
     import torch.nn.functional as F
 
-    probs = torch.sigmoid(logits)
-    bce = F.binary_cross_entropy_with_logits(logits, target)
+    logits_f = logits.float()
+    probs = torch.sigmoid(logits_f)
+    bce = F.binary_cross_entropy_with_logits(logits_f, target)
     return bce + (1 - dice_coef(probs, target).mean())
 
 
 def multiclass_loss(logits: Any, target: Any, eps: float = 1e-6) -> Any:
-    """Cross-entropy + (1 − soft Dice averaged over the classes in the batch)."""
+    """Cross-entropy + (1 − soft Dice averaged over the classes in the batch).
+
+    Uses ``gather`` + ``scatter_add_`` to compute per-class intersection and
+    support without allocating a dense ``(B, C, H, W)`` one-hot tensor.
+    """
+    import torch
     import torch.nn.functional as F
 
-    ce = F.cross_entropy(logits, target)
-    probs = logits.softmax(dim=1)
-    onehot = F.one_hot(target, logits.shape[1]).permute(0, 3, 1, 2).float()
-    inter = (probs * onehot).sum(dim=(0, 2, 3))
-    total = probs.sum(dim=(0, 2, 3)) + onehot.sum(dim=(0, 2, 3))
-    dice = (2 * inter + eps) / (total + eps)
-    present = onehot.sum(dim=(0, 2, 3)) > 0
+    logits_f = logits.float()
+    ce = F.cross_entropy(logits_f, target)
+    probs = logits_f.softmax(dim=1)
+    num_cls = probs.shape[1]
+    flat_t = target.reshape(-1)
+    p_target = probs.gather(1, target.unsqueeze(1)).reshape(-1)
+    inter = torch.zeros(num_cls, device=probs.device, dtype=probs.dtype)
+    inter.scatter_add_(0, flat_t, p_target)
+    true_sum = torch.zeros(num_cls, device=probs.device, dtype=probs.dtype)
+    true_sum.scatter_add_(0, flat_t, torch.ones_like(p_target))
+    pred_sum = probs.sum(dim=(0, 2, 3))
+    dice = (2 * inter + eps) / (pred_sum + true_sum + eps)
+    present = true_sum > 0
     return ce + (1 - dice[present].mean())
 
 
@@ -323,14 +399,15 @@ class ClassCounts:
         self.true = np.zeros(self.classes, dtype=np.int64)
 
     def add(self, pred: np.ndarray, true: np.ndarray) -> None:
-        pred = pred.ravel().astype(np.int64)
-        true = true.ravel().astype(np.int64)
+        pred_flat = pred.ravel()
+        true_flat = true.ravel()
         n = self.classes
-        self.pred += np.bincount(pred, minlength=n)[:n]
-        self.true += np.bincount(true, minlength=n)[:n]
-        self.inter += np.bincount(pred[pred == true], minlength=n)[:n]
-        self.correct += int((pred == true).sum())
-        self.pixels += pred.size
+        match = pred_flat == true_flat
+        self.pred += np.bincount(pred_flat, minlength=n)[:n]
+        self.true += np.bincount(true_flat, minlength=n)[:n]
+        self.inter += np.bincount(pred_flat[match], minlength=n)[:n]
+        self.correct += int(match.sum())
+        self.pixels += pred_flat.size
 
     def per_class_dice(self) -> dict[int, float]:
         """Dice of every class that occurs in the ground truth."""
@@ -357,10 +434,13 @@ def predict_batch(model: Any, x: Any, task: str, threshold: float = 0.5) -> Any:
     """Labels ``(B, H, W)`` for a batch of images ``(B, 3, H, W)`` in [0, 1]."""
     import torch
 
-    with torch.no_grad():
+    with torch.inference_mode(), _inference_autocast(x.device.type):
         logits = model(x)
     if task == TASK_BINARY:
-        return (torch.sigmoid(logits)[:, 0] > threshold).long()
+        if 0.0 < threshold < 1.0:
+            cutoff = math.log(threshold / (1.0 - threshold))
+            return (logits.float()[:, 0] > cutoff).long()
+        return (torch.sigmoid(logits.float())[:, 0] > threshold).long()
     return logits.argmax(dim=1)
 
 
@@ -371,20 +451,53 @@ def predict_arrays(
     device: str = "cpu",
     *,
     threshold: float = 0.5,
-    batch_size: int = 8,
+    batch_size: int | None = None,
 ) -> np.ndarray:
     """Labels ``(N, H, W)`` for in-memory images ``(N, H, W, 3)``."""
     import torch
 
+    default_bs = 32 if device in ("cuda", "mps") else 16
+    bs = batch_size if batch_size is not None else default_bs
     model.eval()
     preds = []
-    for start in range(0, len(X), batch_size):
-        x = torch.from_numpy(X[start : start + batch_size]).permute(0, 3, 1, 2)
-        x = x.float().div(255).to(device)
-        preds.append(predict_batch(model, x, task, threshold).cpu().numpy())
+    non_blocking = device == "cuda"
+    with torch.inference_mode():
+        for start in range(0, len(X), bs):
+            x = torch.from_numpy(X[start : start + bs]).permute(0, 3, 1, 2)
+            x = x.to(device, non_blocking=non_blocking).float().mul_(1.0 / 255.0)
+            with _inference_autocast(device):
+                logits = model(x)
+            if task == TASK_BINARY:
+                if 0.0 < threshold < 1.0:
+                    cutoff = math.log(threshold / (1.0 - threshold))
+                    out = (logits.float()[:, 0] > cutoff).to(torch.uint8)
+                else:
+                    out = (torch.sigmoid(logits.float())[:, 0] > threshold).to(
+                        torch.uint8
+                    )
+            else:
+                out = logits.argmax(dim=1).to(torch.uint8)
+            preds.append(out.cpu().numpy())
     if not preds:
-        return np.zeros(X.shape[:3], dtype=np.int64)
-    return np.concatenate(preds)
+        return np.zeros(X.shape[:3], dtype=np.uint8)
+    return preds[0] if len(preds) == 1 else np.concatenate(preds)
+
+
+def _batch_binary_metrics(
+    pred: np.ndarray, target: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Vectorized per-image hard Dice and IoU over ``(N, H, W)`` boolean arrays."""
+    p = pred.astype(bool, copy=False)
+    y = target.astype(bool, copy=False)
+    axes = tuple(range(1, p.ndim))
+    inter = (p & y).sum(axis=axes, dtype=np.float64)
+    p_sum = p.sum(axis=axes, dtype=np.float64)
+    y_sum = y.sum(axis=axes, dtype=np.float64)
+    total = p_sum + y_sum
+    union = total - inter
+    dices = np.where(total == 0, 1.0, (2.0 * inter) / np.where(total == 0, 1.0, total))
+    ious = np.where(union == 0, 1.0, inter / np.where(union == 0, 1.0, union))
+    return dices, ious
 
 
 def score_predictions(pred: np.ndarray, Y: np.ndarray, task: str) -> dict[str, Any]:
@@ -394,8 +507,7 @@ def score_predictions(pred: np.ndarray, Y: np.ndarray, task: str) -> dict[str, A
     the food-vs-not-food Dice of the same predictions (comparable to binary).
     """
     if task == TASK_BINARY:
-        dices = np.array([dice_score(p, y) for p, y in zip(pred, Y)])
-        ious = np.array([iou_score(p, y) for p, y in zip(pred, Y)])
+        dices, ious = _batch_binary_metrics(pred, Y)
         return {
             "score": float(dices.mean()),
             "score_name": "Dice",
@@ -405,16 +517,14 @@ def score_predictions(pred: np.ndarray, Y: np.ndarray, task: str) -> dict[str, A
             "per_image_dice": dices.tolist(),
         }
     counts = ClassCounts(len(CLASS_NAMES))
-    food = []
-    for p, y in zip(pred, Y):
-        counts.add(p, y)
-        food.append(dice_score(p >= FIRST_FOOD, y >= FIRST_FOOD))
+    counts.add(pred, Y)
+    food_dices, _ = _batch_binary_metrics(pred >= FIRST_FOOD, Y >= FIRST_FOOD)
     return {
         "score": counts.mean_dice(),
         "score_name": "mean class Dice",
         "mean_dice": counts.mean_dice(),
         "pixel_accuracy": counts.pixel_accuracy(),
-        "food_dice": float(np.mean(food)),
+        "food_dice": float(food_dices.mean()),
         "per_class_dice": {
             CLASS_NAMES[c]: v for c, v in counts.per_class_dice().items()
         },
@@ -475,7 +585,6 @@ def train_unet(
     keep the epoch with the best validation score and evaluate on the test set.
     """
     import torch
-    from torch.utils.data import DataLoader
 
     if task not in TASKS:
         raise ValueError(f"Unknown task {task!r}; use one of {TASKS}.")
@@ -505,38 +614,66 @@ def train_unet(
     idx = np.random.permutation(len(X_all))
     n_val = max(1, int(val_fraction * len(idx)))
     val_idx, train_idx = idx[:n_val], idx[n_val:]
-    train_dl = DataLoader(
-        make_dataset(X_all[train_idx], Y_all[train_idx], task, augment=True),
-        batch_size=batch_size,
-        shuffle=True,
-    )
+    X_train, Y_train = X_all[train_idx], Y_all[train_idx]
     X_val, Y_val = X_all[val_idx], Y_all[val_idx]
+    n_train = len(X_train)
 
     model = build_unet(out_ch=output_channels(task), base=base).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     loss_fn = loss_function(task)
+    use_cuda_amp = device == "cuda"
+    scaler = torch.amp.GradScaler("cuda", enabled=use_cuda_amp)
+    non_blocking = device == "cuda"
     history: dict[str, list[float]] = {"train_loss": [], "val_score": []}
     best_score, best_epoch = -1.0, 0
-    best_state = copy.deepcopy(model.state_dict())
+    best_state = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
     val: dict[str, Any] = {"score_name": ""}
 
     for epoch in range(1, epochs + 1):
         model.train()
-        running = 0.0
-        for x, y in train_dl:
-            x, y = x.to(device), y.to(device)
-            optimizer.zero_grad()
-            loss = loss_fn(model(x), y)
-            loss.backward()
-            optimizer.step()
-            running += loss.item() * len(x)
-        train_loss = running / len(train_idx)
+        running = torch.zeros((), device=device)
+        order = np.random.permutation(n_train)
+        for start in range(0, n_train, batch_size):
+            batch_idx = order[start : start + batch_size]
+            x = torch.from_numpy(X_train[batch_idx]).permute(0, 3, 1, 2)
+            x = x.to(device, non_blocking=non_blocking).float().mul_(1.0 / 255.0)
+            y_raw = torch.from_numpy(Y_train[batch_idx]).to(
+                device, non_blocking=non_blocking
+            )
+            y = y_raw.float().unsqueeze(1) if task == TASK_BINARY else y_raw.long()
+            # Vectorized random horizontal flip per sample in the batch
+            flip_mask = torch.rand(len(x), device=device) < 0.5
+            if flip_mask.any():
+                x = torch.where(flip_mask[:, None, None, None], x.flip(-1), x)
+                y_mask = (
+                    flip_mask[:, None, None, None]
+                    if task == TASK_BINARY
+                    else flip_mask[:, None, None]
+                )
+                y = torch.where(y_mask, y.flip(-1), y)
+
+            optimizer.zero_grad(set_to_none=True)
+            if use_cuda_amp:
+                with torch.autocast(device_type="cuda", dtype=torch.float16):
+                    logits = model(x)
+                loss = loss_fn(logits, y)
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss = loss_fn(model(x), y)
+                loss.backward()
+                optimizer.step()
+            running += loss.detach() * len(x)
+        train_loss = float(running.item()) / n_train
         val = evaluate(model, X_val, Y_val, task, device)
         history["train_loss"].append(train_loss)
         history["val_score"].append(val["score"])
         if val["score"] > best_score:
             best_score, best_epoch = val["score"], epoch
-            best_state = copy.deepcopy(model.state_dict())
+            best_state = {
+                k: v.detach().cpu().clone() for k, v in model.state_dict().items()
+            }
         report(
             f"Epoch {epoch}/{epochs} | loss {train_loss:.3f} | "
             f"val {val['score_name']} {val['score']:.3f} (best {best_score:.3f})"
@@ -625,11 +762,13 @@ def list_models(root: str | Path = UNET_MODELS_DIR) -> list[Path]:
     )
 
 
-_MODEL_CACHE: dict[tuple[str, int, str], tuple[Any, dict[str, Any]]] = {}
+_MODEL_CACHE: OrderedDict[tuple[str, int, str], tuple[Any, dict[str, Any]]] = (
+    OrderedDict()
+)
 
 
 def load_model(folder: str | Path, device: str = "cpu") -> tuple[Any, dict[str, Any]]:
-    """Return ``(model, passport)``; cached until the weights file changes."""
+    """Return ``(model, passport)``; LRU-cached until the weights file changes."""
     import torch
 
     folder = Path(folder)
@@ -637,15 +776,19 @@ def load_model(folder: str | Path, device: str = "cpu") -> tuple[Any, dict[str, 
     if not weights.is_file():
         raise FileNotFoundError(f"No {WEIGHTS_FILE} in {folder}")
     key = (str(weights.resolve()), weights.stat().st_mtime_ns, device)
-    if key not in _MODEL_CACHE:
-        with open(folder / PASSPORT_FILE, encoding="utf-8") as fh:
-            passport = json.load(fh)
-        arch = passport["architecture"]
-        model = build_unet(out_ch=int(arch["out_ch"]), base=int(arch["base"]))
-        state = torch.load(weights, map_location="cpu", weights_only=True)
-        model.load_state_dict(state)
-        _MODEL_CACHE.clear()
-        _MODEL_CACHE[key] = (model.to(device).eval(), passport)
+    if key in _MODEL_CACHE:
+        _MODEL_CACHE.move_to_end(key)
+        return _MODEL_CACHE[key]
+    with open(folder / PASSPORT_FILE, encoding="utf-8") as fh:
+        passport = json.load(fh)
+    arch = passport["architecture"]
+    model = build_unet(out_ch=int(arch["out_ch"]), base=int(arch["base"]))
+    state = torch.load(weights, map_location="cpu", weights_only=True)
+    model.load_state_dict(state)
+    while len(_MODEL_CACHE) >= MODEL_CACHE_SIZE:
+        (_, _, evicted_device), (evicted_model, _) = _MODEL_CACHE.popitem(last=False)
+        _release_device_memory(evicted_model, evicted_device)
+    _MODEL_CACHE[key] = (model.to(device).eval(), passport)
     return _MODEL_CACHE[key]
 
 
@@ -663,13 +806,16 @@ def segment(
 ) -> np.ndarray:
     """Label per pixel at the image's own size."""
     h, w = passport["input_size"]
-    rgb = image.convert("RGB")
-    x = np.array(rgb.resize((w, h), Image.BILINEAR))[None]
+    rgb = image if image.mode == "RGB" else image.convert("RGB")
+    resized = rgb if rgb.size == (w, h) else rgb.resize((w, h), Image.BILINEAR)
+    x = np.array(resized, dtype=np.uint8)[None]
     if threshold is None:
         threshold = float(passport.get("threshold", 0.5))
     labels = predict_arrays(model, x, passport["task"], device, threshold=threshold)
-    small = Image.fromarray(labels[0].astype(np.uint8))
-    return np.array(small.resize(rgb.size, Image.NEAREST))
+    mask = labels[0].astype(np.uint8, copy=False)
+    if rgb.size == (w, h):
+        return mask
+    return np.array(Image.fromarray(mask).resize(rgb.size, Image.NEAREST))
 
 
 def ground_truth_path(image_path: str | Path | None) -> Path | None:
@@ -704,11 +850,20 @@ def load_ground_truth(
 
 def label_summary(labels: np.ndarray, names: list[str]) -> list[tuple[str, float]]:
     """``(class name, fraction of pixels)``, largest first."""
-    values, counts = np.unique(labels, return_counts=True)
-    order = np.argsort(-counts)
+    flat = labels.ravel()
+    if flat.size == 0:
+        return []
+    if np.issubdtype(flat.dtype, np.unsignedinteger) or int(flat.min()) >= 0:
+        counts = np.bincount(flat)
+        values = np.flatnonzero(counts)
+        counts = counts[values]
+    else:
+        values, counts = np.unique(flat, return_counts=True)
+    order = np.argsort(-counts, kind="stable")
+    inv_size = 1.0 / flat.size
     out = []
     for i in order:
         value = int(values[i])
         name = names[value] if value < len(names) else str(value)
-        out.append((name, counts[i] / labels.size))
+        out.append((name, float(counts[i] * inv_size)))
     return out

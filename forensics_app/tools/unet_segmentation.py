@@ -15,7 +15,6 @@ The network, training and metrics are in ``unet_common`` (shared with
 from __future__ import annotations
 
 from datetime import datetime
-import io
 from pathlib import Path
 import time
 import tkinter as tk
@@ -23,6 +22,7 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from matplotlib import colormaps
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 import numpy as np
@@ -57,10 +57,10 @@ def _resolve(text: str) -> Path:
 
 
 def _figure_to_image(fig: Figure) -> Image.Image:
-    buf = io.BytesIO()
-    fig.savefig(buf, format="png")
-    buf.seek(0)
-    image = Image.open(buf).convert("RGB")
+    canvas = FigureCanvasAgg(fig)
+    canvas.draw()
+    rgba = np.asarray(canvas.buffer_rgba())
+    image = Image.fromarray(rgba[:, :, :3].copy(), mode="RGB")
     image.info[CHART_MARKER] = True
     return image
 
@@ -86,6 +86,37 @@ def _show_labels(ax: Any, labels: np.ndarray, vmax: int, title: str) -> None:
     ax.set_title(title, fontsize=10)
 
 
+MAX_DISPLAY_EDGE = 900
+
+
+def _display_pair(
+    rgb: Image.Image, mask: np.ndarray, ground_truth: np.ndarray | None
+) -> tuple[Image.Image, np.ndarray, np.ndarray | None]:
+    """Downscale huge photos/masks for Matplotlib display without altering metrics."""
+    longest = max(rgb.size)
+    if longest <= MAX_DISPLAY_EDGE:
+        return rgb, mask, ground_truth
+    scale = MAX_DISPLAY_EDGE / longest
+    size = (
+        max(1, int(round(rgb.width * scale))),
+        max(1, int(round(rgb.height * scale))),
+    )
+    disp_rgb = rgb.resize(size, Image.BILINEAR)
+    disp_mask = np.asarray(
+        Image.fromarray(mask.astype(np.uint8, copy=False)).resize(size, Image.NEAREST)
+    )
+    disp_gt = (
+        np.asarray(
+            Image.fromarray(ground_truth.astype(np.uint8, copy=False)).resize(
+                size, Image.NEAREST
+            )
+        )
+        if ground_truth is not None
+        else None
+    )
+    return disp_rgb, disp_mask, disp_gt
+
+
 def render_segmentation(
     image: Image.Image,
     mask: np.ndarray,
@@ -93,42 +124,49 @@ def render_segmentation(
     *,
     ground_truth: np.ndarray | None = None,
     scores: dict[str, float] | None = None,
+    summary: list[tuple[str, float]] | None = None,
 ) -> Image.Image:
     """Original image, (ground truth,) segmentation mask and overlay, as on the
     slide, with a legend of the classes found."""
-    rgb = image.convert("RGB")
+    rgb = image if image.mode == "RGB" else image.convert("RGB")
     names = passport["class_names"]
+    name_to_idx = {name: i for i, name in enumerate(names)}
     vmax = int(passport["num_classes"]) - 1
-    panels = 4 if ground_truth is not None else 3
-    aspect = rgb.height / rgb.width
+    found = (
+        summary if summary is not None else uc.label_summary(mask, names)
+    )[:MAX_LEGEND]
+    disp_rgb, disp_mask, disp_gt = _display_pair(rgb, mask, ground_truth)
+
+    panels = 4 if disp_gt is not None else 3
+    aspect = disp_rgb.height / disp_rgb.width
     fig = Figure(figsize=(4.6 * panels, 4.6 * aspect + 1.6), dpi=100)
     axes = fig.subplots(1, panels)
 
-    axes[0].imshow(rgb)
+    axes[0].imshow(disp_rgb)
     axes[0].set_title("Original Image", fontsize=10)
     col = 1
-    if ground_truth is not None:
-        _show_labels(axes[1], ground_truth, vmax, "Ground Truth")
+    if disp_gt is not None:
+        _show_labels(axes[1], disp_gt, vmax, "Ground Truth")
         col = 2
     title = "Segmentation Mask"
     if scores:
         title += "\n" + ", ".join(f"{k} {v:.2f}" for k, v in scores.items())
-    _show_labels(axes[col], mask, vmax, title)
-    axes[col + 1].imshow(rgb)
+    _show_labels(axes[col], disp_mask, vmax, title)
+    axes[col + 1].imshow(disp_rgb)
     axes[col + 1].imshow(
-        mask, cmap="viridis", vmin=0, vmax=vmax, alpha=0.5, interpolation="nearest"
+        disp_mask, cmap="viridis", vmin=0, vmax=vmax, alpha=0.5, interpolation="nearest"
     )
     axes[col + 1].set_title("Overlayed Mask", fontsize=10)
 
     cmap = colormaps["viridis"]
-    found = uc.label_summary(mask, names)[:MAX_LEGEND]
+    denom = max(vmax, 1)
     handles = [
         Patch(
-            color=cmap(names.index(name) / max(vmax, 1)),
+            color=cmap(name_to_idx[name] / denom),
             label=f"{name} ({share:.0%})",
         )
         for name, share in found
-        if name in names
+        if name in name_to_idx
     ]
     fig.legend(
         handles=handles,
@@ -181,8 +219,14 @@ def _segment_job(
     if gt_path is not None:
         ground_truth = uc.load_ground_truth(gt_path, task, image.size)
         scores = segmentation_scores(mask, ground_truth, task)
+    summary_items = uc.label_summary(mask, passport["class_names"])
     figure = render_segmentation(
-        image, mask, passport, ground_truth=ground_truth, scores=scores
+        image,
+        mask,
+        passport,
+        ground_truth=ground_truth,
+        scores=scores,
+        summary=summary_items,
     )
 
     details: dict[str, Any] = {
@@ -199,12 +243,11 @@ def _segment_job(
     details["Ground truth"] = display_path(gt_path) if gt_path else "not found"
     for name, value in (scores or {}).items():
         details[f"  {name}"] = f"{value:.3f}"
-    for name, share in uc.label_summary(mask, passport["class_names"]):
+    for name, share in summary_items:
         details[f"Class: {name}"] = f"{share:.1%} of pixels"
     details["Time"] = f"{(time.perf_counter() - started) * 1000:.0f} ms"
 
-    found = [n for n, _ in uc.label_summary(mask, passport["class_names"])]
-    summary = f"UNet ({folder.name}): {len(found)} classes found"
+    summary = f"UNet ({folder.name}): {len(summary_items)} classes found"
     if scores:
         name, value = next(iter(scores.items()))
         summary += f", {name} {value:.2f} against the ground truth"

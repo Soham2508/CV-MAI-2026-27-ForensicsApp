@@ -120,15 +120,53 @@ class MetricTests(unittest.TestCase):
         target = torch.randint(0, 43, (2, 8, 8))
         self.assertGreater(float(uc.multiclass_loss(logits, target)), 0)
 
+    def test_multiclass_loss_matches_onehot_value_and_gradients(self) -> None:
+        torch.manual_seed(7)
+        base_logits = torch.randn(3, 12, 8, 10)
+        target = torch.randint(0, 12, (3, 8, 10))
+        # Leave at least one class absent to exercise the present-class mask.
+        target[target == 11] = 0
+
+        a = base_logits.clone().requires_grad_(True)
+        fast_loss = uc.multiclass_loss(a, target)
+        fast_loss.backward()
+
+        b = base_logits.clone().requires_grad_(True)
+        ce = torch.nn.functional.cross_entropy(b, target)
+        probs = b.softmax(dim=1)
+        onehot = torch.nn.functional.one_hot(target, 12).permute(0, 3, 1, 2).float()
+        inter = (probs * onehot).sum(dim=(0, 2, 3))
+        total = probs.sum(dim=(0, 2, 3)) + onehot.sum(dim=(0, 2, 3))
+        dice = (2 * inter + 1e-6) / (total + 1e-6)
+        ref_loss = ce + (1 - dice[onehot.sum(dim=(0, 2, 3)) > 0].mean())
+        ref_loss.backward()
+
+        self.assertAlmostEqual(
+            float(fast_loss.detach()), float(ref_loss.detach()), places=5
+        )
+        np.testing.assert_allclose(a.grad.numpy(), b.grad.numpy(), atol=1e-5, rtol=1e-5)
+
     def test_score_predictions(self) -> None:
         Y = np.array([[[0, 5], [1, 5]]])
         multi = uc.score_predictions(Y.copy(), Y, uc.TASK_MULTICLASS)
         self.assertEqual(multi["mean_dice"], 1.0)
         self.assertEqual(multi["food_dice"], 1.0)
         binary = uc.score_predictions(
-            np.array([[[0, 1], [0, 0]]]), np.array([[[0, 1], [0, 1]]]), uc.TASK_BINARY
+            np.array([[[0, 1], [0, 0]], [[0, 0], [0, 0]]]),
+            np.array([[[0, 1], [0, 1]], [[0, 0], [0, 0]]]),
+            uc.TASK_BINARY,
         )
-        self.assertAlmostEqual(binary["dice"], 2 / 3)
+        self.assertAlmostEqual(binary["per_image_dice"][0], 2 / 3)
+        self.assertEqual(binary["per_image_dice"][1], 1.0)
+        self.assertAlmostEqual(binary["dice"], (2 / 3 + 1.0) / 2)
+
+    def test_label_summary_orders_by_pixel_share(self) -> None:
+        mask = np.array([[0, 0, 2], [2, 2, 1]], dtype=np.uint8)
+        summary = uc.label_summary(mask, ["bg", "tray", "cutlery"])
+        self.assertEqual([name for name, _ in summary], ["cutlery", "bg", "tray"])
+        self.assertAlmostEqual(summary[0][1], 0.5)
+        self.assertAlmostEqual(summary[1][1], 1 / 3)
+        self.assertAlmostEqual(summary[2][1], 1 / 6)
 
 
 class ModelTests(unittest.TestCase):
@@ -178,6 +216,25 @@ class TrainingTests(unittest.TestCase):
         mask = uc.segment(model, passport, image)
         self.assertEqual(mask.shape, (32, 48))
         np.testing.assert_array_equal(mask, uc.segment(run.model, run.passport, image))
+
+    def test_load_model_keeps_two_models_with_lru_eviction(self) -> None:
+        uc._MODEL_CACHE.clear()
+        run_a = self.runs[uc.TASK_BINARY]
+        run_b = self.runs[uc.TASK_MULTICLASS]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dir_a = uc.save_model(run_a.model, run_a.passport, root / "a")
+            dir_b = uc.save_model(run_b.model, run_b.passport, root / "b")
+            dir_c = uc.save_model(run_a.model, run_a.passport, root / "c")
+
+            loaded_a = uc.load_model(dir_a)
+            loaded_b = uc.load_model(dir_b)
+            self.assertIs(uc.load_model(dir_a), loaded_a)  # touch a -> b is LRU
+            self.assertEqual(len(uc._MODEL_CACHE), 2)
+            uc.load_model(dir_c)
+            self.assertEqual(len(uc._MODEL_CACHE), 2)
+            self.assertIs(uc.load_model(dir_a), loaded_a)  # a stayed cached
+            self.assertIsNot(uc.load_model(dir_b), loaded_b)  # b was evicted
 
     def test_rejects_sizes_not_divisible_by_8(self) -> None:
         with self.assertRaises(ValueError):
