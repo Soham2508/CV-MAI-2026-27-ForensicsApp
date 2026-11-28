@@ -70,6 +70,30 @@ so the Blood Cell Detection tool can show ground truth without the dataset. For
 any other image it looks for `labels/<name>.txt` next to an `images/` folder, or
 `<name>.txt` next to the image.
 
+## Zero-shot classification (Set 10)
+
+Set 10 adds CLIP with Hugging Face `transformers` (part of `requirements.txt`),
+following the course's `CLIP_playground` notebook. Everything is in one tool,
+Sidebar → Deep Learning → **CLIP Zero-Shot**, which first asks what to do.
+
+| Step | Choice in the tool | What it does |
+|---|---|---|
+| 10.1 CLIP zero-shot | **Classify the open image** → Classify | Classifies the open image into any number of classes written as free text, each filling a prompt template (`a photo of a {}.`). Shows the image next to a probability bar chart and lists each class's probability and cosine similarity. Several templates are averaged (prompt ensembling, as in the CLIP paper). The notebook's examples (animals, counting cats, where the cats are, drinks, image style) can be loaded in the dialog |
+| Notebook §1.3 | **Classify the open image** → Compare templates | One chart per template plus their ensemble, with the same class order, to see how much prompt wording matters |
+| Notebook exercise 2 | **Classify the open image** → Compare models | The same prompts with CLIP ViT-B/32 and ViT-L/14 side by side |
+| Notebook §1.4 | **Search a folder of images with a text query** | Ranks a folder of images by a text query ("a person who has been to space"). Folder embeddings stay in memory, so further searches in the same folder only embed the query |
+| Notebook exercise 1 | **Evaluate zero-shot accuracy on a labelled folder** | Zero-shot accuracy on your own photos, one sub-folder per class (the folder name is the class text, `hot_chocolate` → "hot chocolate"). Reports top-1 and top-k accuracy for every template and their ensemble, a confusion matrix, per-class precision / recall / F1 and the worst mistakes; predictions and per-template accuracy are saved as CSV in `outputs/set10_clip/` |
+
+Running the tool again while its chart is on the canvas analyses the original
+image, not the chart.
+
+The default model is `openai/clip-vit-base-patch32`; `openai/clip-vit-large-patch14`
+(1.7 GB, slower, more accurate) can be chosen instead. Weights are downloaded on
+first use into `models/clip/`, which is git-ignored.
+
+Softmax always sums to 1, so CLIP picks one of the given classes even when none
+fits; add an "other"-style class or look at the cosine similarities.
+
 ## Course roadmap
 
 The shell is intentionally neutral about the algorithms. Possible tool modules  
