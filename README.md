@@ -70,6 +70,40 @@ so the Blood Cell Detection tool can show ground truth without the dataset. For
 any other image it looks for `labels/<name>.txt` next to an `images/` folder, or
 `<name>.txt` next to the image.
 
+## Semantic segmentation (Set 11)
+
+Set 11 trains the course's small U-Net on the Tray Food Segmentation dataset
+(hospital meal trays, 43 classes) and uses it in the app. Two models are
+trained with the same network:
+
+| Model | Task | Input | Loss |
+|---|---|---|---|
+| `models/unet/tray_food_binary` | food vs. not food (course notebook) | 128 × 208 | BCE + soft Dice |
+| `models/unet/tray_multiclass` | all 43 classes (as on the slide) | 256 × 416 | cross-entropy + soft Dice |
+
+| Step | Where | What it does |
+|---|---|---|
+| 11.1 Train and save | `notebooks/train_unet.ipynb` | Loads the dataset, builds the U-Net, explains Dice, trains both models (best validation epoch kept), evaluates them on the test set (Dice, IoU, threshold, per-class Dice), saves them to `models/unet/`, then loads a saved model and visualises its segmentation |
+| 11.1 Train and save | Sidebar → Deep Learning → **UNet Segmentation** → Train a new model | The same training from the app, with the task, epochs, input size, width, batch size and learning rate adjustable; shows the epoch in the progress window, then the training curves and test predictions |
+| 11.1 Load and test | Sidebar → Deep Learning → **UNet Segmentation** → Segment the open image | Loads a saved model and shows the original image, the segmentation mask and the mask overlaid on the image, with the classes found. For a dataset image (`XTest/a.jpg`, or `images/a.jpg` in `models/unet/tray_samples/`) the ground truth mask is shown too, with its Dice |
+
+The dataset is not committed. Download `TrayDataset.zip` (course materials, or
+[Kaggle](https://www.kaggle.com/datasets/thezaza102/tray-food-segmentation))
+and unzip it into `datasets/tray/`, so that `datasets/tray/TrayDataset/XTrain`
+exists. The 8 test images and their masks are copied to
+`models/unet/tray_samples/`, so the app can be tried without the dataset.
+
+The notebook can also be run without opening Jupyter (`nbclient` is in
+`requirements.txt`); it trains both models and saves its outputs in place:
+
+```
+jupyter execute --inplace notebooks/train_unet.ipynb
+```
+
+Each model folder contains `unet.pt` (weights) and `passport.json` (task,
+classes, input size, architecture, training settings, history and test
+metrics).
+
 ## Course roadmap
 
 The shell is intentionally neutral about the algorithms. Possible tool modules  

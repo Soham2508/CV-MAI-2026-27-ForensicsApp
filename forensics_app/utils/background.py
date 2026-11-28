@@ -41,6 +41,7 @@ def run_with_progress(
     job: Callable[..., T],
     /,
     *args: Any,
+    status: Callable[[], str] | None = None,
     **kwargs: Any,
 ) -> T:
     """Run ``job(*args, **kwargs)`` in a worker thread behind a progress window.
@@ -48,6 +49,8 @@ def run_with_progress(
     Blocks the calling Tkinter code (like a modal dialog) while the event loop
     keeps running, so the app keeps redrawing. Without a real Tk parent (for
     example in unit tests), the job runs directly in the calling thread.
+    ``status``, if given, is polled on the main thread and its text shown under
+    the message (e.g. the current training epoch).
     """
     if not isinstance(parent, tk.Misc):
         return job(*args, **kwargs)
@@ -75,6 +78,11 @@ def run_with_progress(
         bar = ttk.Progressbar(dialog, mode="indeterminate", length=300)
         bar.pack(padx=18, pady=4)
         elapsed = tk.StringVar(value="Elapsed: 0 s")
+        status_text = tk.StringVar()
+        if status is not None:
+            ttk.Label(dialog, textvariable=status_text, wraplength=320).pack(
+                padx=18, pady=(4, 0)
+            )
         ttk.Label(dialog, textvariable=elapsed).pack(padx=18, pady=(4, 6))
         ttk.Label(
             dialog,
@@ -93,6 +101,8 @@ def run_with_progress(
         def poll() -> None:
             if thread.is_alive():
                 elapsed.set(f"Elapsed: {time.monotonic() - started:.0f} s")
+                if status is not None:
+                    status_text.set(status())
                 dialog.after(POLL_MS, poll)
                 return
             bar.stop()
