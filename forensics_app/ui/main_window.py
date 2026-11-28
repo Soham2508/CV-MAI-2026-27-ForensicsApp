@@ -20,6 +20,13 @@ OPEN_TYPES = [
     ("All files", "*.*"),
 ]
 SAVE_TYPES = [("PNG image", "*.png"), ("JPEG image", "*.jpg"), ("TIFF image", "*.tiff")]
+SIDEBAR_SCROLL_UNIT = 20  # pixels per scroll unit of the tool list
+
+
+def touchpad_delta_y(delta: int) -> int:
+    """Vertical pixels of a Tk 9 ``<TouchpadScroll>`` delta (signed low 16 bits)."""
+    low = int(delta) & 0xFFFF
+    return low if low < 0x8000 else low - 0x10000
 
 
 class MainWindow:
@@ -108,11 +115,16 @@ class MainWindow:
 
         tool_panel = ttk.Frame(sidebar, style="Sidebar.TFrame")
         tool_panel.pack(fill="both", expand=True)
+        # A canvas asks for ~380 px by default, more than the sidebar has; with
+        # a small requested width and the scrollbar packed first, the scrollbar
+        # always keeps its space.
         self.sidebar_canvas = tk.Canvas(
             tool_panel,
             background="#eef1f5",
             borderwidth=0,
             highlightthickness=0,
+            width=1,
+            yscrollincrement=SIDEBAR_SCROLL_UNIT,
         )
         scrollbar = ttk.Scrollbar(
             tool_panel,
@@ -120,8 +132,8 @@ class MainWindow:
             command=self.sidebar_canvas.yview,
         )
         self.sidebar_canvas.configure(yscrollcommand=scrollbar.set)
-        self.sidebar_canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
+        self.sidebar_canvas.pack(side="left", fill="both", expand=True)
 
         tool_list = ttk.Frame(self.sidebar_canvas, style="Sidebar.TFrame")
         tool_list_window = self.sidebar_canvas.create_window(
@@ -144,6 +156,10 @@ class MainWindow:
         self.root.bind_all("<Button-5>", self._on_sidebar_mousewheel)
         if sys.platform == "darwin":
             self.root.bind_all("<Option-MouseWheel>", self._on_sidebar_mousewheel)
+        self._tk_major = int(float(self.root.tk.call("info", "tclversion")))
+        if self._tk_major >= 9:
+            # Tk 9 sends trackpad scrolling as <TouchpadScroll>, not <MouseWheel>.
+            self.root.bind_all("<TouchpadScroll>", self._on_sidebar_touchpad)
 
         for category, tools in self.registry.categories():
             ttk.Label(tool_list, text=category, style="Category.TLabel").pack(
@@ -272,6 +288,12 @@ class MainWindow:
         num = getattr(event, "num", None)
         delta = getattr(event, "delta", 0)
 
+        if getattr(self, "_tk_major", 8) >= 9 and num not in (4, 5):
+            # Tk 9 reports wheel deltas like Windows on every platform and its
+            # own widgets scroll -delta / 4 pixels.
+            self._scroll_sidebar_pixels(-delta / 4)
+            return "break"
+
         if num == 4:
             units = -1
         elif num == 5:
@@ -290,6 +312,23 @@ class MainWindow:
         if units:
             canvas.yview_scroll(units, "units")
         return "break"
+
+    def _on_sidebar_touchpad(self, event: tk.Event) -> str | None:
+        """Scroll the tool list with a trackpad (Tk 9 ``<TouchpadScroll>``)."""
+        if not self._is_pointer_over_sidebar(event):
+            return None
+        dy = touchpad_delta_y(getattr(event, "delta", 0))
+        if dy:
+            self._scroll_sidebar_pixels(-dy)
+        return "break"
+
+    def _scroll_sidebar_pixels(self, pixels: float) -> None:
+        """Scroll by pixels, keeping the remainder below one scroll unit."""
+        remainder = getattr(self, "_scroll_remainder", 0.0) + pixels
+        units = int(remainder / SIDEBAR_SCROLL_UNIT)
+        self._scroll_remainder = remainder - units * SIDEBAR_SCROLL_UNIT
+        if units:
+            self.sidebar_canvas.yview_scroll(units, "units")
 
     def _bind_shortcuts(self) -> None:
         self.root.bind_all("<Control-o>", lambda _event: self.open_image())
